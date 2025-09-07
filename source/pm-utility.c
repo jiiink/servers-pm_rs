@@ -31,35 +31,36 @@
 /*===========================================================================*
  *				get_free_pid				     *
  *===========================================================================*/
-pid_t get_free_pid()
+pid_t get_free_pid(void)
 {
   static pid_t next_pid = INIT_PID + 1;		/* next pid to be assigned */
-  register struct mproc *rmp;			/* check process table */
+  const struct mproc *rmp;			/* check process table */
   int t;					/* zero if pid still free */
 
   /* Find a free pid for the child and put it in the table. */
   do {
 	t = 0;
 	next_pid = (next_pid < NR_PIDS ? next_pid + 1 : INIT_PID + 1);
-	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++)
-		if (rmp->mp_pid == next_pid || rmp->mp_procgrp == next_pid) {
+	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
+		if ((rmp->mp_flags & IN_USE) &&
+		    (rmp->mp_pid == next_pid || rmp->mp_procgrp == next_pid)) {
 			t = 1;
 			break;
 		}
+	}
   } while (t);					/* 't' = 0 means pid free */
-  return(next_pid);
+  return next_pid;
 }
 
 /*===========================================================================*
  *				find_param				     *
  *===========================================================================*/
-char *
-find_param(const char *name)
+const char *find_param(const char *name)
 {
-  register const char *namep;
-  register char *envp;
+  const char *namep;
+  const char *envp;
 
-  for (envp = (char *) monitor_params; *envp != 0;) {
+  for (envp = monitor_params; *envp != 0;) {
 	for (namep = name; *namep != 0 && *namep == *envp; namep++, envp++)
 		;
 	if (*namep == '\0' && *envp == '=')
@@ -67,22 +68,21 @@ find_param(const char *name)
 	while (*envp++ != 0)
 		;
   }
-  return(NULL);
+  return NULL;
 }
 
 /*===========================================================================*
  *				find_proc  				     *
  *===========================================================================*/
-struct mproc *find_proc(lpid)
-pid_t lpid;
+struct mproc *find_proc(pid_t lpid)
 {
-  register struct mproc *rmp;
+  struct mproc *rmp;
 
   for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++)
 	if ((rmp->mp_flags & IN_USE) && rmp->mp_pid == lpid)
-		return(rmp);
+		return rmp;
 
-  return(NULL);
+  return NULL;
 }
 
 /*===========================================================================*
@@ -90,16 +90,16 @@ pid_t lpid;
  *===========================================================================*/
 int nice_to_priority(int nice, unsigned* new_q)
 {
-	if (nice < PRIO_MIN || nice > PRIO_MAX) return(EINVAL);
+	if (nice < PRIO_MIN || nice > PRIO_MAX) return EINVAL;
 
-	*new_q = MAX_USER_Q + (nice-PRIO_MIN) * (MIN_USER_Q-MAX_USER_Q+1) /
+	*new_q = MAX_USER_Q + (unsigned)(nice-PRIO_MIN) * (MIN_USER_Q-MAX_USER_Q+1) /
 	    (PRIO_MAX-PRIO_MIN+1);
 
 	/* Neither of these should ever happen. */
 	if ((signed) *new_q < MAX_USER_Q) *new_q = MAX_USER_Q;
 	if (*new_q > MIN_USER_Q) *new_q = MIN_USER_Q;
 
-	return (OK);
+	return OK;
 }
 
 /*===========================================================================*
@@ -110,6 +110,8 @@ int pm_isokendpt(int endpoint, int *proc)
 	*proc = _ENDPOINT_P(endpoint);
 	if (*proc < 0 || *proc >= NR_PROCS)
 		return EINVAL;
+	if (mproc[*proc].mp_magic != MP_MAGIC)
+		return EDEADEPT;
 	if (endpoint != mproc[*proc].mp_endpoint)
 		return EDEADEPT;
 	if (!(mproc[*proc].mp_flags & IN_USE))
@@ -120,9 +122,7 @@ int pm_isokendpt(int endpoint, int *proc)
 /*===========================================================================*
  *				tell_vfs			 	     *
  *===========================================================================*/
-void tell_vfs(rmp, m_ptr)
-struct mproc *rmp;
-message *m_ptr;
+void tell_vfs(struct mproc *rmp, message *m_ptr)
 {
 /* Send a request to VFS, without blocking.
  */
@@ -141,16 +141,16 @@ message *m_ptr;
 /*===========================================================================*
  *				set_rusage_times		 	     *
  *===========================================================================*/
-void
-set_rusage_times(struct rusage * r_usage, clock_t user_time, clock_t sys_time)
+void set_rusage_times(struct rusage *r_usage, clock_t user_time,
+	clock_t sys_time)
 {
-	u64_t usec;
+	uint64_t usec;
 
-	usec = user_time * 1000000 / sys_hz();
+	usec = (uint64_t)user_time * 1000000 / sys_hz();
 	r_usage->ru_utime.tv_sec = usec / 1000000;
 	r_usage->ru_utime.tv_usec = usec % 1000000;
 
-	usec = sys_time * 1000000 / sys_hz();
+	usec = (uint64_t)sys_time * 1000000 / sys_hz();
 	r_usage->ru_stime.tv_sec = usec / 1000000;
 	r_usage->ru_stime.tv_usec = usec % 1000000;
 }

@@ -48,6 +48,7 @@
 #include "pm.h"
 #include "mproc.h"
 #include <assert.h>
+#include <string.h>
 
 /*
  * A realistic upper bound for the number of subscribing services.  The process
@@ -66,13 +67,12 @@ static struct {
 static unsigned int nsubs = 0;
 static unsigned int nested = 0;
 
-/*
- * For the current event of the given process, as determined by its flags, send
- * a process event message to the next subscriber, or resume handling the
- * event itself if there are no more subscribers to notify.
- */
-static void
-resume_event(struct mproc * rmp)
+static void resume_event(struct mproc * rmp);
+
+/*===========================================================================*
+ *				resume_event				     *
+ *===========================================================================*/
+static void resume_event(struct mproc * rmp)
 {
 	message m;
 	unsigned int i, event;
@@ -122,20 +122,18 @@ resume_event(struct mproc * rmp)
 		restart_sigs(rmp);
 }
 
-/*
- * Remove a subscriber from the set, forcefully if we have to.  Ensure that
- * any processes currently subject to process event notification are updated
- * accordingly, in a way that no services are skipped for process events.
- */
-static void
-remove_sub(unsigned int slot)
+/*===========================================================================*
+ *				remove_sub				     *
+ *===========================================================================*/
+static void remove_sub(unsigned int slot)
 {
 	struct mproc *rmp;
-	unsigned int i;
 
 	/* The loop below needs the remaining items to be kept in order. */
-	for (i = slot; i < nsubs - 1; i++)
-		subs[i] = subs[i + 1];
+	if (slot < nsubs - 1) {
+		memmove(&subs[slot], &subs[slot + 1],
+			(nsubs - 1 - slot) * sizeof(subs[0]));
+	}
 	nsubs--;
 
 	/* Adjust affected processes' event subscriber indexes to match. */
@@ -160,15 +158,10 @@ remove_sub(unsigned int slot)
 	}
 }
 
-/*
- * Subscribe to process events.  The given event mask denotes the events in
- * which the caller is interested.  Multiple calls will each replace the mask,
- * and a mask of zero will unsubscribe the service from events altogether.
- * Return OK on success, EPERM if the caller may not register for events, or
- * ENOMEM if all subscriber slots are in use already.
- */
-int
-do_proceventmask(void)
+/*===========================================================================*
+ *			    do_proceventmask				     *
+ *===========================================================================*/
+int do_proceventmask(void)
 {
 	unsigned int i, mask;
 
@@ -197,26 +190,23 @@ do_proceventmask(void)
 	if (mask == 0)
 		return OK;
 
-	/* This case should never trigger. */
-	if (nsubs == __arraycount(subs)) {
+	if (nsubs >= NR_SUBS) {
 		printf("PM: too many process event subscribers!\n");
 		return ENOMEM;
 	}
 
 	subs[nsubs].endpt = who_e;
 	subs[nsubs].mask = mask;
+	subs[nsubs].waiting = 0;
 	nsubs++;
 
 	return OK;
 }
 
-/*
- * A subscribing service has replied to a process event message from us, or at
- * least that is what should have happened.  First make sure of this, and then
- * resume event handling for the affected process.
- */
-int
-do_proc_event_reply(void)
+/*===========================================================================*
+ *			  do_proc_event_reply				     *
+ *===========================================================================*/
+int do_proc_event_reply(void)
 {
 	struct mproc *rmp;
 	endpoint_t endpt;
@@ -308,13 +298,10 @@ do_proc_event_reply(void)
 	return SUSPEND;
 }
 
-/*
- * Publish a process event to interested subscribers.  The event is determined
- * from the process flags.  In addition, if the event is a process exit, also
- * check if it is a subscribing service that died.
- */
-void
-publish_event(struct mproc * rmp)
+/*===========================================================================*
+ *			      publish_event				     *
+ *===========================================================================*/
+void publish_event(struct mproc * rmp)
 {
 	unsigned int i;
 

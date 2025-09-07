@@ -11,43 +11,39 @@
 #include <minix/com.h>
 #include <signal.h>
 #include "mproc.h"
+#include <string.h>
 
 /*===========================================================================*
  *				do_get					     *
  *===========================================================================*/
-int
-do_get(void)
+int do_get(void)
 {
 /* Handle PM_GETUID, PM_GETGID, PM_GETGROUPS, PM_GETPID, PM_GETPGRP, PM_GETSID,
  * PM_ISSETUGID.
  */
-  register struct mproc *rmp = mp;
-  int r;
-  int ngroups;
+  struct mproc *rmp = mp;
+  int r = OK;
 
   switch(call_nr) {
-	case PM_GETGROUPS:
-		ngroups = m_in.m_lc_pm_groups.num;
-		if (ngroups > NGROUPS_MAX || ngroups < 0)
-			return(EINVAL);
+	case PM_GETGROUPS: {
+		int ngroups = m_in.m_lc_pm_groups.num;
+		if (ngroups < 0 || ngroups > NGROUPS_MAX)
+			return EINVAL;
 
 		if (ngroups == 0) {
 			r = rmp->mp_ngroups;
-			break;
+		} else {
+			if (ngroups < rmp->mp_ngroups)
+				return EINVAL; /* Asking for less groups than available */
+
+			r = sys_datacopy(SELF, (vir_bytes) rmp->mp_sgroups, who_e,
+				m_in.m_lc_pm_groups.ptr, (size_t)ngroups * sizeof(gid_t));
+
+			if (r == OK)
+				r = rmp->mp_ngroups;
 		}
-
-		if (ngroups < rmp->mp_ngroups)
-			/* Asking for less groups than available */
-			return(EINVAL);
-
-		r = sys_datacopy(SELF, (vir_bytes) rmp->mp_sgroups, who_e,
-			m_in.m_lc_pm_groups.ptr, ngroups * sizeof(gid_t));
-
-		if (r != OK)
-			return(r);
-
-		r = rmp->mp_ngroups;
 		break;
+	}
 	case PM_GETUID:
 		r = rmp->mp_realuid;
 		rmp->mp_reply.m_pm_lc_getuid.euid = rmp->mp_effuid;
@@ -67,14 +63,14 @@ do_get(void)
 		r = rmp->mp_procgrp;
 		break;
 
-	case PM_GETSID:
-	{
+	case PM_GETSID: {
 		struct mproc *target;
 		pid_t p = m_in.m_lc_pm_getsid.pid;
 		target = p ? find_proc(p) : &mproc[who_p];
-		r = ESRCH;
 		if(target)
 			r = target->mp_procgrp;
+		else
+			r = ESRCH;
 		break;
 	}
 	case PM_ISSETUGID:
@@ -85,34 +81,30 @@ do_get(void)
 		r = EINVAL;
 		break;
   }
-  return(r);
+  return r;
 }
 
 /*===========================================================================*
  *				do_set					     *
  *===========================================================================*/
-int
-do_set(void)
+int do_set(void)
 {
 /* Handle PM_SETUID, PM_SETEUID, PM_SETGID, PM_SETGROUPS, PM_SETEGID, and
  * SETSID. These calls have in common that, if successful, they will be
  * forwarded to VFS as well.
  */
-  register struct mproc *rmp = mp;
+  struct mproc *rmp = mp;
   message m;
-  int r, i;
-  int ngroups;
-  uid_t uid;
-  gid_t gid;
+  int r;
 
   memset(&m, 0, sizeof(m));
 
   switch(call_nr) {
-	case PM_SETUID:
-		uid = m_in.m_lc_pm_setuid.uid;
+	case PM_SETUID: {
+		uid_t uid = m_in.m_lc_pm_setuid.uid;
 		/* NetBSD specific semantics: setuid(geteuid()) may fail. */
 		if (rmp->mp_realuid != uid && rmp->mp_effuid != SUPER_USER)
-			return(EPERM);
+			return EPERM;
 		/* BSD semantics: always update all three fields. */
 		rmp->mp_realuid = uid;
 		rmp->mp_effuid = uid;
@@ -124,13 +116,13 @@ do_set(void)
 		m.VFS_PM_RID = rmp->mp_realuid;
 
 		break;
-
-	case PM_SETEUID:
-		uid = m_in.m_lc_pm_setuid.uid;
+	}
+	case PM_SETEUID: {
+		uid_t uid = m_in.m_lc_pm_setuid.uid;
 		/* BSD semantics: seteuid(geteuid()) may fail. */
 		if (rmp->mp_realuid != uid && rmp->mp_svuid != uid &&
 		    rmp->mp_effuid != SUPER_USER)
-			return(EPERM);
+			return EPERM;
 		rmp->mp_effuid = uid;
 
 		m.m_type = VFS_PM_SETUID;
@@ -139,11 +131,11 @@ do_set(void)
 		m.VFS_PM_RID = rmp->mp_realuid;
 
 		break;
-
-	case PM_SETGID:
-		gid = m_in.m_lc_pm_setgid.gid;
+	}
+	case PM_SETGID: {
+		gid_t gid = m_in.m_lc_pm_setgid.gid;
 		if (rmp->mp_realgid != gid && rmp->mp_effuid != SUPER_USER)
-			return(EPERM);
+			return EPERM;
 		rmp->mp_realgid = gid;
 		rmp->mp_effgid = gid;
 		rmp->mp_svgid = gid;
@@ -154,12 +146,12 @@ do_set(void)
 		m.VFS_PM_RID = rmp->mp_realgid;
 
 		break;
-
-	case PM_SETEGID:
-		gid = m_in.m_lc_pm_setgid.gid;
+	}
+	case PM_SETEGID: {
+		gid_t gid = m_in.m_lc_pm_setgid.gid;
 		if (rmp->mp_realgid != gid && rmp->mp_svgid != gid &&
 		    rmp->mp_effuid != SUPER_USER)
-			return(EPERM);
+			return EPERM;
 		rmp->mp_effgid = gid;
 
 		m.m_type = VFS_PM_SETGID;
@@ -168,28 +160,29 @@ do_set(void)
 		m.VFS_PM_RID = rmp->mp_realgid;
 
 		break;
+	}
+	case PM_SETGROUPS: {
+		int i;
+		int ngroups = m_in.m_lc_pm_groups.num;
 
-	case PM_SETGROUPS:
 		if (rmp->mp_effuid != SUPER_USER)
-			return(EPERM);
+			return EPERM;
 
-		ngroups = m_in.m_lc_pm_groups.num;
-
-		if (ngroups > NGROUPS_MAX || ngroups < 0)
-			return(EINVAL);
+		if (ngroups < 0 || ngroups > NGROUPS_MAX)
+			return EINVAL;
 
 		if (ngroups > 0 && m_in.m_lc_pm_groups.ptr == 0)
-			return(EFAULT);
+			return EFAULT;
 
 		r = sys_datacopy(who_e, m_in.m_lc_pm_groups.ptr, SELF,
 			     (vir_bytes) rmp->mp_sgroups,
-			     ngroups * sizeof(gid_t));
+			     (size_t)ngroups * sizeof(gid_t));
 		if (r != OK)
-			return(r);
+			return r;
 
 		for (i = 0; i < ngroups; i++) {
 			if (rmp->mp_sgroups[i] > GID_MAX)
-				return(EINVAL);
+				return EINVAL;
 		}
 		for (i = ngroups; i < NGROUPS_MAX; i++) {
 			rmp->mp_sgroups[i] = 0;
@@ -202,8 +195,9 @@ do_set(void)
 		m.VFS_PM_GROUP_ADDR = (char *) rmp->mp_sgroups;
 
 		break;
+	}
 	case PM_SETSID:
-		if (rmp->mp_procgrp == rmp->mp_pid) return(EPERM);
+		if (rmp->mp_procgrp == rmp->mp_pid) return EPERM;
 		rmp->mp_procgrp = rmp->mp_pid;
 
 		m.m_type = VFS_PM_SETSID;
@@ -212,12 +206,12 @@ do_set(void)
 		break;
 
 	default:
-		return(EINVAL);
+		return EINVAL;
   }
 
   /* Send the request to VFS */
   tell_vfs(rmp, &m);
 
   /* Do not reply until VFS has processed the request */
-  return(SUSPEND);
+  return SUSPEND;
 }

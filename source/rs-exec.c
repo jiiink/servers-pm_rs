@@ -3,22 +3,23 @@
 #include <sys/exec.h>
 #include <libexec.h>
 #include <machine/vmparam.h>
+#include <string.h>
 
-static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
-	char *frame, int frame_len, vir_bytes ps_str);
+static int do_exec(int proc_e, char *exec, size_t exec_len,
+	const char *progname, char *frame, size_t frame_len, vir_bytes ps_str);
 static int exec_restart(int proc_e, int result, vir_bytes pc, vir_bytes ps_str);
 static int read_seg(struct exec_info *execi, off_t off,
         vir_bytes seg_addr, size_t seg_bytes);
 
 /* Array of loaders for different object formats */
-static struct exec_loaders {
+static const struct exec_loaders {
 	libexec_exec_loadfunc_t load_object;
-} const exec_loaders[] = {
+} exec_loaders[] = {
 	{ libexec_load_elf },
 	{ NULL }
 };
 
-int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
+int srv_execve(int proc_e, char *exec, size_t exec_len, const char *progname,
 	char **argv, char **envp)
 {
 	size_t frame_size = 0;	/* Size of the new initial stack. */
@@ -27,7 +28,7 @@ int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
 	char overflow = 0;	/* No overflow yet. */
 	char *frame;
 	struct ps_strings *psp;
-	int vsp = 0;	/* (virtual) Stack pointer in new address space. */
+	vir_bytes vsp = 0;	/* (virtual) Stack pointer in new address space. */
 
 	int r;
 
@@ -50,19 +51,19 @@ int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
 		&vsp, &psp);
 
 	r = do_exec(proc_e, exec, exec_len, progname, frame, frame_size,
-		vsp + ((char *)psp - frame));
+		(vir_bytes)(vsp + ((char *)psp - frame)));
 
 	/* Failure, return the memory used for the frame and exit. */
-	(void) sbrk(-frame_size);
+	(void) sbrk(-(intptr_t)frame_size);
 
 	return r;
 }
 
 
-static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
-	char *frame, int frame_len, vir_bytes ps_str)
+static int do_exec(int proc_e, char *exec, size_t exec_len,
+	const char *progname, char *frame, size_t frame_len, vir_bytes ps_str)
 {
-	int r;
+	int r = ENOEXEC;
 	vir_bytes vsp;
 	struct exec_info execi;
 	int i;
@@ -74,8 +75,7 @@ static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
 	execi.proc_e = proc_e;
 	execi.hdr = exec;
 	execi.filesize = execi.hdr_len = exec_len;
-	strncpy(execi.progname, progname, PROC_NAME_LEN-1);
-	execi.progname[PROC_NAME_LEN-1] = '\0';
+	strlcpy(execi.progname, progname, PROC_NAME_LEN);
 	execi.frame_len = frame_len;
 
 	/* callback functions and data */
@@ -105,7 +105,7 @@ static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
 	/* Patch up stack and copy it from RS to new core image. */
 	vsp = execi.stack_high - frame_len;
 	r = sys_datacopy(SELF, (vir_bytes) frame,
-		proc_e, (vir_bytes) vsp, (phys_bytes)frame_len);
+		proc_e, vsp, (phys_bytes)frame_len);
 	if (r != OK) {
 		printf("do_exec: copying out new stack failed: %d\n", r);
 		exec_restart(proc_e, r, execi.pc, ps_str);
@@ -140,26 +140,21 @@ static int exec_restart(int proc_e, int result, vir_bytes pc, vir_bytes ps_str)
 /*===========================================================================*
  *                             read_seg                                     *
  *===========================================================================*/
-static int read_seg(
-struct exec_info *execi,       /* various data needed for exec */
-off_t off,                     /* offset in file */
-vir_bytes seg_addr,            /* address to load segment */
-size_t seg_bytes           /* how much is to be transferred? */
-)
+static int read_seg(struct exec_info *execi, off_t off,
+	vir_bytes seg_addr, size_t seg_bytes)
 {
 /*
  * The byte count on read is usually smaller than the segment count, because
  * a segment is padded out to a click multiple, and the data segment is only
  * partially initialized.
  */
-
   int r;
 
-  if (off+seg_bytes > execi->hdr_len) return ENOEXEC;
-  if((r= sys_datacopy(SELF, ((vir_bytes)execi->hdr)+off,
+  if (off < 0 || (size_t)off + seg_bytes > execi->hdr_len) return ENOEXEC;
+  if((r= sys_datacopy(SELF, (vir_bytes)execi->hdr + off,
   	execi->proc_e, seg_addr, seg_bytes)) != OK) {
-	printf("RS: exec read_seg: copy 0x%x bytes into %i at 0x%08lx failed: %i\n",
-		(int) seg_bytes, execi->proc_e, seg_addr, r);
+	printf("RS: exec read_seg: copy %zu bytes into %d at 0x%lx failed: %d\n",
+		seg_bytes, execi->proc_e, (unsigned long)seg_addr, r);
   }
   return r;
 }

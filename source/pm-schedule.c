@@ -15,7 +15,7 @@
 #include "kernel/proc.h"
 
 /*===========================================================================*
- *				init_scheduling				     *
+ *				sched_init				     *
  *===========================================================================*/
 void sched_init(void)
 {
@@ -96,17 +96,18 @@ int sched_nice(struct mproc *rmp, int nice)
 	 * priority. If you want to control process priority, assign the process
 	 * to a user-space scheduler */
 	if (rmp->mp_scheduler == KERNEL || rmp->mp_scheduler == NONE)
-		return (EINVAL);
+		return EINVAL;
 
 	if ((rv = nice_to_priority(nice, &maxprio)) != OK) {
 		return rv;
 	}
 
+	m.m_type = SCHEDULING_SET_NICE;
 	m.m_pm_sched_scheduling_set_nice.endpoint	= rmp->mp_endpoint;
 	m.m_pm_sched_scheduling_set_nice.maxprio	= maxprio;
 	if ((rv = _taskcall(rmp->mp_scheduler, SCHEDULING_SET_NICE, &m))) {
 		return rv;
 	}
 
-	return (OK);
+	return OK;
 }
