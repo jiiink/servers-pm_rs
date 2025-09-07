@@ -27,13 +27,15 @@
 #include <libexec.h>
 #include <sys/ptrace.h>
 #include "mproc.h"
-#include <string.h>
-#include <stdbool.h>
+
+#define ESCRIPT	(-2000)	/* Returned by read_header for a #! script. */
+#define PTRSIZE	sizeof(char *) /* Size of pointers in argv[] and envp[]. */
 
 /*===========================================================================*
  *				do_exec					     *
  *===========================================================================*/
-int do_exec(void)
+int
+do_exec(void)
 {
 	message m;
 
@@ -41,9 +43,9 @@ int do_exec(void)
 	memset(&m, 0, sizeof(m));
 	m.m_type = VFS_PM_EXEC;
 	m.VFS_PM_ENDPT = mp->mp_endpoint;
-	m.VFS_PM_PATH = m_in.m_lc_pm_exec.name;
+	m.VFS_PM_PATH = (void *)m_in.m_lc_pm_exec.name;
 	m.VFS_PM_PATH_LEN = m_in.m_lc_pm_exec.namelen;
-	m.VFS_PM_FRAME = m_in.m_lc_pm_exec.frame;
+	m.VFS_PM_FRAME = (void *)m_in.m_lc_pm_exec.frame;
 	m.VFS_PM_FRAME_LEN = m_in.m_lc_pm_exec.framelen;
 	m.VFS_PM_PS_STR = m_in.m_lc_pm_exec.ps_str;
 
@@ -59,8 +61,7 @@ int do_exec(void)
  *===========================================================================*/
 int do_newexec(void)
 {
-	int proc_e, proc_n;
-	bool allow_setuid;
+	int proc_e, proc_n, allow_setuid;
 	vir_bytes ptr;
 	struct mproc *rmp;
 	struct exec_info args;
@@ -69,22 +70,22 @@ int do_newexec(void)
 	if (who_e != VFS_PROC_NR && who_e != RS_PROC_NR)
 		return EPERM;
 
-	proc_e = m_in.m_lexec_pm_exec_new.endpt;
+	proc_e= m_in.m_lexec_pm_exec_new.endpt;
 	if (pm_isokendpt(proc_e, &proc_n) != OK) {
 		panic("do_newexec: got bad endpoint: %d", proc_e);
 	}
-	rmp = &mproc[proc_n];
-	ptr = m_in.m_lexec_pm_exec_new.ptr;
-	r = sys_datacopy(who_e, ptr, SELF, (vir_bytes)&args, sizeof(args));
+	rmp= &mproc[proc_n];
+	ptr= m_in.m_lexec_pm_exec_new.ptr;
+	r= sys_datacopy(who_e, ptr, SELF, (vir_bytes)&args, sizeof(args));
 	if (r != OK)
 		panic("do_newexec: sys_datacopy failed: %d", r);
 
-	allow_setuid = false;	/* Do not allow setuid execution */
+	allow_setuid = 0;	/* Do not allow setuid execution */
 	rmp->mp_flags &= ~TAINTED;	/* By default not tainted */
 
 	if (rmp->mp_tracer == NO_TRACER) {
 		/* Okay, setuid execution is allowed */
-		allow_setuid = true;
+		allow_setuid = 1;
 	}
 
 	if (allow_setuid && args.allow_setuid) {
@@ -157,8 +158,10 @@ void exec_restart(struct mproc *rmp, int result, vir_bytes pc, vir_bytes sp,
 {
 	int r, sn;
 
-	if (result != OK) {
-		if (rmp->mp_flags & PARTIAL_EXEC) {
+	if (result != OK)
+	{
+		if (rmp->mp_flags & PARTIAL_EXEC)
+		{
 			/* Use SIGKILL to signal that something went wrong */
 			sys_kill(rmp->mp_endpoint, SIGKILL);
 			return;
@@ -183,12 +186,15 @@ void exec_restart(struct mproc *rmp, int result, vir_bytes pc, vir_bytes sp,
 	/* Cause a signal if this process is traced.
 	 * Do this before making the process runnable again!
 	 */
-	if (rmp->mp_tracer != NO_TRACER && !(rmp->mp_trace_flags & TO_NOEXEC)) {
+	if (rmp->mp_tracer != NO_TRACER && !(rmp->mp_trace_flags & TO_NOEXEC))
+	{
 		sn = (rmp->mp_trace_flags & TO_ALTEXEC) ? SIGSTOP : SIGTRAP;
-		check_sig(rmp->mp_pid, sn, false /* ksig */);
+
+		check_sig(rmp->mp_pid, sn, FALSE /* ksig */);
 	}
 
 	/* Call kernel to exec with SP and PC set by VFS. */
-	r = sys_exec(rmp->mp_endpoint, sp, rmp->mp_name, pc, ps_str);
+	r = sys_exec(rmp->mp_endpoint, sp, (vir_bytes)rmp->mp_name, pc, ps_str);
 	if (r != OK) panic("sys_exec failed: %d", r);
 }
+

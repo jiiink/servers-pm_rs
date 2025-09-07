@@ -28,26 +28,25 @@
 #include <sys/resource.h>
 #include <signal.h>
 #include "mproc.h"
-#include <string.h>
-#include <stdbool.h>
 
-#define LAST_FEW_SLOTS      2	/* last few slots reserved for superuser */
+#define LAST_FEW            2	/* last few slots reserved for superuser */
 
 static void zombify(struct mproc *rmp);
-static void check_parent(struct mproc *child, bool try_cleanup);
-static bool tell_parent(struct mproc *child, vir_bytes addr);
+static void check_parent(struct mproc *child, int try_cleanup);
+static int tell_parent(struct mproc *child, vir_bytes addr);
 static void tell_tracer(struct mproc *child);
 static void tracer_died(struct mproc *child);
-static void cleanup(struct mproc *rmp);
+static void cleanup(register struct mproc *rmp);
 
 /*===========================================================================*
  *				do_fork					     *
  *===========================================================================*/
-int do_fork(void)
+int
+do_fork(void)
 {
 /* The process pointed to by 'mp' has forked.  Create a child process. */
-  struct mproc *rmp;	/* pointer to parent */
-  struct mproc *rmc;	/* pointer to child */
+  register struct mproc *rmp;	/* pointer to parent */
+  register struct mproc *rmc;	/* pointer to child */
   pid_t new_pid;
   static unsigned int next_child = 0;
   int i, n = 0, s;
@@ -59,9 +58,10 @@ int do_fork(void)
   */
   rmp = mp;
   if ((procs_in_use == NR_PROCS) ||
-  		(procs_in_use >= NR_PROCS-LAST_FEW_SLOTS && rmp->mp_effuid != 0)) {
+  		(procs_in_use >= NR_PROCS-LAST_FEW && rmp->mp_effuid != 0))
+  {
   	printf("PM: warning, process table is full!\n");
-  	return EAGAIN;
+  	return(EAGAIN);
   }
 
   /* Find a slot in 'mproc' for the child process.  A slot must exist. */
@@ -131,20 +131,23 @@ int do_fork(void)
 
   /* Tell the tracer, if any, about the new child */
   if (rmc->mp_tracer != NO_TRACER)
-	sig_proc(rmc, SIGSTOP, true /*trace*/, false /* ksig */);
+	sig_proc(rmc, SIGSTOP, TRUE /*trace*/, FALSE /* ksig */);
 
-  /* Do not reply until VFS is ready to process the fork request */
+  /* Do not reply until VFS is ready to process the fork
+  * request
+  */
   return SUSPEND;
 }
 
 /*===========================================================================*
  *				do_srv_fork				     *
  *===========================================================================*/
-int do_srv_fork(void)
+int
+do_srv_fork(void)
 {
 /* The process pointed to by 'mp' has forked.  Create a child process. */
-  struct mproc *rmp;	/* pointer to parent */
-  struct mproc *rmc;	/* pointer to child */
+  register struct mproc *rmp;	/* pointer to parent */
+  register struct mproc *rmc;	/* pointer to child */
   int s;
   pid_t new_pid;
   static unsigned int next_child = 0;
@@ -161,9 +164,10 @@ int do_srv_fork(void)
   */
   rmp = mp;
   if ((procs_in_use == NR_PROCS) ||
-  		(procs_in_use >= NR_PROCS-LAST_FEW_SLOTS && rmp->mp_effuid != 0)) {
+  		(procs_in_use >= NR_PROCS-LAST_FEW && rmp->mp_effuid != 0))
+  {
   	printf("PM: warning, process table is full!\n");
-  	return EAGAIN;
+  	return(EAGAIN);
   }
 
   /* Find a slot in 'mproc' for the child process.  A slot must exist. */
@@ -227,7 +231,7 @@ int do_srv_fork(void)
 
   /* Tell the tracer, if any, about the new child */
   if (rmc->mp_tracer != NO_TRACER)
-	sig_proc(rmc, SIGSTOP, true /*trace*/, false /* ksig */);
+	sig_proc(rmc, SIGSTOP, TRUE /*trace*/, FALSE /* ksig */);
 
   /* Wakeup the newly created process */
   reply(rmc-mproc, OK);
@@ -238,7 +242,8 @@ int do_srv_fork(void)
 /*===========================================================================*
  *				do_exit					     *
  *===========================================================================*/
-int do_exit(void)
+int
+do_exit(void)
 {
  /* Perform the exit(status) system call. The real work is done by exit_proc(),
   * which is also called when a process is killed by a signal. System processes
@@ -251,21 +256,26 @@ int do_exit(void)
       sys_kill(mp->mp_endpoint, SIGKILL);
   }
   else {
-      exit_proc(mp, m_in.m_lc_pm_exit.status, false /*dump_core*/);
+      exit_proc(mp, m_in.m_lc_pm_exit.status, FALSE /*dump_core*/);
   }
-  return SUSPEND;		/* can't communicate from beyond the grave */
+  return(SUSPEND);		/* can't communicate from beyond the grave */
 }
 
 /*===========================================================================*
  *				exit_proc				     *
  *===========================================================================*/
-void exit_proc(struct mproc *rmp, int exit_status, bool dump_core)
+void
+exit_proc(
+	register struct mproc *rmp,	/* pointer to the process to be terminated */
+	int exit_status,		/* the process' exit status (for parent) */
+	int dump_core			/* flag indicating whether to dump core */
+)
 {
 /* A process is done.  Release most of the process' possessions.  If its
  * parent is waiting, release the rest, else keep the process slot and
  * become a zombie.
  */
-  int proc_nr, proc_nr_e;
+  register int proc_nr, proc_nr_e;
   int r;
   pid_t procgrp;
   clock_t user_time, sys_time;
@@ -273,13 +283,13 @@ void exit_proc(struct mproc *rmp, int exit_status, bool dump_core)
 
   /* Do not create core files for set uid execution */
   if (dump_core && rmp->mp_realuid != rmp->mp_effuid)
-	dump_core = false;
+	dump_core = FALSE;
 
   /* System processes are destroyed before informing VFS, meaning that VFS can
    * not get their CPU state, so we can't generate a coredump for them either.
    */
   if (dump_core && (rmp->mp_flags & PRIV_PROC))
-	dump_core = false;
+	dump_core = FALSE;
 
   proc_nr = (int) (rmp - mproc);	/* get process slot number */
   proc_nr_e = rmp->mp_endpoint;
@@ -394,12 +404,12 @@ void exit_proc(struct mproc *rmp, int exit_status, bool dump_core)
 
 		/* Notify new parent. */
 		if (rmp->mp_flags & ZOMBIE)
-			check_parent(rmp, true /*try_cleanup*/);
+			check_parent(rmp, TRUE /*try_cleanup*/);
 	}
   }
 
   /* Send a hangup to the process' process group if it was a session leader. */
-  if (procgrp != 0) check_sig(-procgrp, SIGHUP, false /* ksig */);
+  if (procgrp != 0) check_sig(-procgrp, SIGHUP, FALSE /* ksig */);
 }
 
 /*===========================================================================*
@@ -461,7 +471,8 @@ void exit_restart(struct mproc *rmp)
 /*===========================================================================*
  *				do_wait4				     *
  *===========================================================================*/
-int do_wait4(void)
+int
+do_wait4(void)
 {
 /* A process wants to wait for a child to terminate. If a child is already
  * waiting, go clean it up and let this WAIT4 call terminate.  Otherwise,
@@ -471,10 +482,9 @@ int do_wait4(void)
  * If a child has already exited, the routine tell_parent() sends the reply
  * to awaken the caller.
  */
-  struct mproc *rp;
+  register struct mproc *rp;
   vir_bytes addr;
-  int i, pidarg, options, children;
-  bool waited_for;
+  int i, pidarg, options, children, waited_for;
 
   /* Set internal variables. */
   pidarg  = m_in.m_lc_pm_wait4.pid;		/* 1st param */
@@ -503,8 +513,8 @@ int do_wait4(void)
 		if (rp->mp_flags & TRACE_ZOMBIE) {
 			/* Traced child meets the pid test and has exited. */
 			tell_tracer(rp);
-			check_parent(rp, true /*try_cleanup*/);
-			return SUSPEND;
+			check_parent(rp, TRUE /*try_cleanup*/);
+			return(SUSPEND);
 		}
 		if (rp->mp_flags & TRACE_STOPPED) {
 			/* This child meets the pid test and is being traced.
@@ -518,7 +528,7 @@ int do_wait4(void)
 
 					mp->mp_reply.m_pm_lc_wait4.status =
 					    W_STOPCODE(i);
-					return rp->mp_pid;
+					return(rp->mp_pid);
 				}
 			}
 		}
@@ -532,7 +542,7 @@ int do_wait4(void)
 			if (waited_for &&
 			    !(rp->mp_flags & (VFS_CALL | EVENT_CALL)))
 				cleanup(rp);
-			return SUSPEND;
+			return(SUSPEND);
 		}
 	}
   }
@@ -541,31 +551,35 @@ int do_wait4(void)
   if (children > 0) {
 	/* At least 1 child meets the pid test exists, but has not exited. */
 	if (options & WNOHANG) {
-		return 0;    /* parent does not want to wait */
+		return(0);    /* parent does not want to wait */
 	}
 	mp->mp_flags |= WAITING;	     /* parent wants to wait */
 	mp->mp_wpid = (pid_t) pidarg;	     /* save pid for later */
 	mp->mp_waddr = addr;		     /* save rusage addr for later */
-	return SUSPEND;		     /* do not reply, let it wait */
+	return(SUSPEND);		     /* do not reply, let it wait */
   } else {
 	/* No child even meets the pid test.  Return error immediately. */
-	return ECHILD;			     /* no - parent has no children */
+	return(ECHILD);			     /* no - parent has no children */
   }
 }
 
 /*===========================================================================*
  *				wait_test				     *
  *===========================================================================*/
-int wait_test(const struct mproc *rmp, const struct mproc *child)
+int
+wait_test(
+	struct mproc *rmp,			/* process that may be waiting */
+	struct mproc *child			/* process that may be waited for */
+)
 {
 /* See if a parent or tracer process is waiting for a child process.
  * A tracer is considered to be a pseudo-parent.
  */
-  bool parent_waiting, right_child;
+  int parent_waiting, right_child;
   pid_t pidarg;
 
   pidarg = rmp->mp_wpid;		/* who's being waited for? */
-  parent_waiting = (rmp->mp_flags & WAITING);
+  parent_waiting = rmp->mp_flags & WAITING;
   right_child =				/* child meets one of the 3 tests? */
   	(pidarg == -1 || pidarg == child->mp_pid ||
   	 -pidarg == child->mp_procgrp);
@@ -576,7 +590,8 @@ int wait_test(const struct mproc *rmp, const struct mproc *child)
 /*===========================================================================*
  *				zombify					     *
  *===========================================================================*/
-static void zombify(struct mproc *rmp)
+static void
+zombify(struct mproc *rmp)
 {
 /* Zombify a process. First check if the exiting process is traced by a process
  * other than its parent; if so, the tracer must be notified about the exit
@@ -599,18 +614,23 @@ static void zombify(struct mproc *rmp)
 		return;
 
 	tell_tracer(rmp);
-  } else {
+  }
+  else {
 	rmp->mp_flags |= ZOMBIE;
   }
 
   /* No tracer, or tracer is parent, or tracer has now been notified. */
-  check_parent(rmp, false /*try_cleanup*/);
+  check_parent(rmp, FALSE /*try_cleanup*/);
 }
 
 /*===========================================================================*
  *				check_parent				     *
  *===========================================================================*/
-static void check_parent(struct mproc *child, bool try_cleanup)
+static void
+check_parent(
+	struct mproc *child,			/* tells which process is exiting */
+	int try_cleanup			/* clean up the child when done? */
+)
 {
 /* We would like to inform the parent of an exiting child about the child's
  * death. If the parent is waiting for the child, tell it immediately;
@@ -630,7 +650,7 @@ static void check_parent(struct mproc *child, bool try_cleanup)
   }
   else if (wait_test(p_mp, child)) {
 	if (!tell_parent(child, p_mp->mp_waddr))
-		try_cleanup = false; /* child is still there */
+		try_cleanup = FALSE; /* child is still there */
 
 	/* The 'try_cleanup' flag merely saves us from having to be really
 	 * careful with statement ordering in exit_proc() and exit_restart().
@@ -640,14 +660,14 @@ static void check_parent(struct mproc *child, bool try_cleanup)
   }
   else {
 	/* Parent is not waiting. */
-	sig_proc(p_mp, SIGCHLD, true /*trace*/, false /* ksig */);
+	sig_proc(p_mp, SIGCHLD, TRUE /*trace*/, FALSE /* ksig */);
   }
 }
 
 /*===========================================================================*
  *				tell_parent				     *
  *===========================================================================*/
-static bool tell_parent(struct mproc *child, vir_bytes addr)
+static int tell_parent(struct mproc *child, vir_bytes addr)
 {
 /* Tell the parent of the given process that it has terminated, by satisfying
  * the parent's ongoing wait4() call.  If the parent has requested the child
@@ -661,7 +681,7 @@ static bool tell_parent(struct mproc *child, vir_bytes addr)
   struct mproc *parent;
   int r;
 
-  mp_parent = child->mp_parent;
+  mp_parent= child->mp_parent;
   if (mp_parent <= 0)
 	panic("tell_parent: bad value in mp_parent: %d", mp_parent);
   if(!(child->mp_flags & ZOMBIE))
@@ -671,7 +691,7 @@ static bool tell_parent(struct mproc *child, vir_bytes addr)
   parent = &mproc[mp_parent];
 
   /* See if we need to report resource usage to the parent. */
-  if (addr != 0) {
+  if (addr) {
 	/* We report only user and system times for now. TODO: support other
 	 * fields, although this is tricky since the child process is already
 	 * gone as far as the kernel and other services are concerned..
@@ -684,7 +704,7 @@ static bool tell_parent(struct mproc *child, vir_bytes addr)
 	    addr, sizeof(r_usage))) != OK) {
 		reply(child->mp_parent, r);
 
-		return false; /* copy error - the child is still there */
+		return FALSE; /* copy error - the child is still there */
 	}
   }
 
@@ -702,13 +722,16 @@ static bool tell_parent(struct mproc *child, vir_bytes addr)
   parent->mp_child_utime += child->mp_child_utime;
   parent->mp_child_stime += child->mp_child_stime;
 
-  return true; /* child has been waited for */
+  return TRUE; /* child has been waited for */
 }
 
 /*===========================================================================*
  *				tell_tracer				     *
  *===========================================================================*/
-static void tell_tracer(struct mproc *child)
+static void
+tell_tracer(
+	struct mproc *child			/* tells which process is exiting */
+)
 {
   int mp_tracer;
   struct mproc *tracer;
@@ -733,7 +756,10 @@ static void tell_tracer(struct mproc *child)
 /*===========================================================================*
  *				tracer_died				     *
  *===========================================================================*/
-static void tracer_died(struct mproc *child)
+static void
+tracer_died(
+	struct mproc *child			/* process being traced */
+)
 {
 /* The process that was tracing the given child, has died for some reason.
  * This is really the tracer's fault, but we can't let INIT deal with this.
@@ -747,7 +773,7 @@ static void tracer_died(struct mproc *child)
    * Note that this may cause cascading exits.
    */
   if (!(child->mp_flags & EXITING)) {
-	sig_proc(child, SIGKILL, true /*trace*/, false /* ksig */);
+	sig_proc(child, SIGKILL, TRUE /*trace*/, FALSE /* ksig */);
 
 	return;
   }
@@ -759,19 +785,23 @@ static void tracer_died(struct mproc *child)
 	child->mp_flags &= ~TRACE_ZOMBIE;
 	child->mp_flags |= ZOMBIE;
 
-	check_parent(child, true /*try_cleanup*/);
+	check_parent(child, TRUE /*try_cleanup*/);
   }
 }
 
 /*===========================================================================*
  *				cleanup					     *
  *===========================================================================*/
-static void cleanup(struct mproc *rmp)
+static void
+cleanup(
+	register struct mproc *rmp	/* tells which process is exiting */
+)
 {
-  /* Release the process table entry and reinitialize some fields. */
+  /* Release the process table entry and reinitialize some field. */
   rmp->mp_pid = 0;
   rmp->mp_flags = 0;
   rmp->mp_child_utime = 0;
   rmp->mp_child_stime = 0;
   procs_in_use--;
 }
+

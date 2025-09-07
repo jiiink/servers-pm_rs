@@ -2,6 +2,8 @@
  * routines that perform them.
  */
 
+#define _TABLE
+
 #include "pm.h"
 #include <minix/callnr.h>
 #include <signal.h>
@@ -9,9 +11,6 @@
 
 #define CALL(n)	[((n) - PM_BASE)]
 
-/* The order of the entries here determines the mapping between system call
- * numbers and the logic that handles them.
- */
 int (* const call_vec[NR_PM_CALLS])(void) = {
 	CALL(PM_EXIT)		= do_exit,		/* _exit(2) */
 	CALL(PM_FORK)		= do_fork,		/* fork(2) */

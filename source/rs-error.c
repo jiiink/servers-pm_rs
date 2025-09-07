@@ -8,29 +8,31 @@
 /* A single error entry. */
 struct errentry {
     int errnum;
-    const char* errstr;
+    char* errstr;
 };
 
 /* Initialization errors. */
-static const struct errentry init_errlist[] = {
+static struct errentry init_errlist[] = {
   { ENOSYS,     "service does not support the requested initialization type"  },
   { ERESTART,     "service requested an initialization reset"  }
 };
+static const int init_nerr = sizeof(init_errlist) / sizeof(init_errlist[0]);
 
 /* Live update errors. */
-static const struct errentry lu_errlist[] = {
+static struct errentry lu_errlist[] = {
   { ENOSYS,     "service does not support live update"                        },
   { EINVAL,     "service does not support the required state"                 },
   { EBUSY,      "service is not able to prepare for the update now"           },
   { EGENERIC,   "generic error occurred while preparing for the update"       }
 };
+static const int lu_nerr = sizeof(lu_errlist) / sizeof(lu_errlist[0]);
 
 /*===========================================================================*
  *				  rs_strerror				     *
  *===========================================================================*/
-static const char * rs_strerror(int errnum, const struct errentry *errlist, size_t nerr)
+static char * rs_strerror(int errnum, struct errentry *errlist, const int nerr)
 {
-  size_t i;
+  int i;
 
   for(i=0; i < nerr; i++) {
       if(errnum == errlist[i].errnum)
@@ -43,15 +45,15 @@ static const char * rs_strerror(int errnum, const struct errentry *errlist, size
 /*===========================================================================*
  *				  init_strerror				     *
  *===========================================================================*/
-const char * init_strerror(int errnum)
+char * init_strerror(int errnum)
 {
-  return rs_strerror(errnum, init_errlist, sizeof(init_errlist) / sizeof(init_errlist[0]));
+  return rs_strerror(errnum, init_errlist, init_nerr);
 }
 
 /*===========================================================================*
  *				   lu_strerror				     *
  *===========================================================================*/
-const char * lu_strerror(int errnum)
+char * lu_strerror(int errnum)
 {
-  return rs_strerror(errnum, lu_errlist, sizeof(lu_errlist)/sizeof(lu_errlist[0]));
+  return rs_strerror(errnum, lu_errlist, lu_nerr);
 }

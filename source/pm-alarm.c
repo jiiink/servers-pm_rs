@@ -16,26 +16,24 @@
 #include <assert.h>
 #include "mproc.h"
 
-#include <stdbool.h>
+#define US 1000000UL	/* shortcut for microseconds per second */
 
-#define US_PER_SEC 1000000UL /* Microseconds per second */
-
-static clock_t ticks_from_timeval(const struct timeval *tv);
+static clock_t ticks_from_timeval(struct timeval *tv);
 static void timeval_from_ticks(struct timeval *tv, clock_t ticks);
-static bool is_sane_timeval(const struct timeval *tv);
-static void getset_vtimer(struct mproc *mp, int nwhich, const struct
+static int is_sane_timeval(struct timeval *tv);
+static void getset_vtimer(struct mproc *mp, int nwhich, struct
 	itimerval *value, struct itimerval *ovalue);
 static void get_realtimer(struct mproc *mp, struct itimerval *value);
-static void set_realtimer(struct mproc *mp, const struct itimerval *value);
+static void set_realtimer(struct mproc *mp, struct itimerval *value);
 static void cause_sigalrm(int arg);
 
 /*===========================================================================*
  *				ticks_from_timeval			     *
  *===========================================================================*/
-static clock_t ticks_from_timeval(const struct timeval *tv)
+static clock_t ticks_from_timeval(tv)
+struct timeval *tv;
 {
   clock_t ticks;
-  unsigned long tv_sec = (unsigned long)tv->tv_sec;
 
   /* Large delays cause a lot of problems.  First, the alarm system call
    * takes an unsigned seconds count and the library has cast it to an int.
@@ -53,58 +51,63 @@ static clock_t ticks_from_timeval(const struct timeval *tv)
    */
 
   /* In any case, the following conversion must always round up. */
-  ticks = system_hz * tv_sec;
-  if ( (ticks / system_hz) != tv_sec) { /* Check for overflow */
+
+  ticks = system_hz * (unsigned long) tv->tv_sec;
+  if ( (ticks / system_hz) != (unsigned long)tv->tv_sec) {
 	ticks = LONG_MAX;
   } else {
-	ticks += ((system_hz * (unsigned long)tv->tv_usec + (US_PER_SEC - 1)) / US_PER_SEC);
+	ticks += ((system_hz * (unsigned long)tv->tv_usec + (US-1)) / US);
   }
 
   if (ticks > LONG_MAX) ticks = LONG_MAX;
 
-  return ticks;
+  return(ticks);
 }
 
 /*===========================================================================*
  *				timeval_from_ticks			     *
  *===========================================================================*/
-static void timeval_from_ticks(struct timeval *tv, clock_t ticks)
+static void timeval_from_ticks(tv, ticks)
+struct timeval *tv;
+clock_t ticks;
 {
   tv->tv_sec = (long) (ticks / system_hz);
-  tv->tv_usec = (long) ((ticks % system_hz) * US_PER_SEC / system_hz);
+  tv->tv_usec = (long) ((ticks % system_hz) * US / system_hz);
 }
 
 /*===========================================================================*
  *				is_sane_timeval				     *
  *===========================================================================*/
-static bool is_sane_timeval(const struct timeval *tv)
+static int
+is_sane_timeval(struct timeval *tv)
 {
   /* This imposes a reasonable time value range for setitimer. */
   return (tv->tv_sec >= 0 && tv->tv_sec <= MAX_SECS &&
- 	  tv->tv_usec >= 0 && tv->tv_usec < US_PER_SEC);
+ 	  tv->tv_usec >= 0 && tv->tv_usec < US);
 }
 
 /*===========================================================================*
  *				do_itimer				     *
  *===========================================================================*/
-int do_itimer(void)
+int
+do_itimer(void)
 {
   struct itimerval ovalue, value;	/* old and new interval timers */
-  bool setval, getval;			/* set and/or retrieve the values? */
+  int setval, getval;			/* set and/or retrieve the values? */
   int r, which;
 
   /* Make sure 'which' is one of the defined timers. */
   which = m_in.m_lc_pm_itimer.which;
-  if (which < 0 || which >= NR_ITIMERS) return EINVAL;
+  if (which < 0 || which >= NR_ITIMERS) return(EINVAL);
 
   /* Determine whether to set and/or return the given timer value, based on
-   * which of the value and ovalue parameters are non-null. At least one of
-   * them must be non-null.
+   * which of the value and ovalue parameters are nonzero. At least one of
+   * them must be nonzero.
    */
   setval = (m_in.m_lc_pm_itimer.value != 0);
   getval = (m_in.m_lc_pm_itimer.ovalue != 0);
 
-  if (!setval && !getval) return EINVAL;
+  if (!setval && !getval) return(EINVAL);
 
   /* If we're setting a new value, copy the new timer from user space.
    * Also, make sure its fields have sane values.
@@ -112,24 +115,27 @@ int do_itimer(void)
   if (setval) {
 	r = sys_datacopy(who_e, m_in.m_lc_pm_itimer.value,
 		PM_PROC_NR, (vir_bytes)&value, (phys_bytes)sizeof(value));
-  	if (r != OK) return r;
+  	if (r != OK) return(r);
 
   	if (!is_sane_timeval(&value.it_value) ||
   	    !is_sane_timeval(&value.it_interval))
-  		return EINVAL;
+  		return(EINVAL);
   }
 
   switch (which) {
-  	case ITIMER_REAL:
+  	case ITIMER_REAL :
   		if (getval) get_realtimer(mp, &ovalue);
+
   		if (setval) set_realtimer(mp, &value);
+
   		r = OK;
   		break;
 
-  	case ITIMER_VIRTUAL:
-  	case ITIMER_PROF:
+  	case ITIMER_VIRTUAL :
+  	case ITIMER_PROF :
 		getset_vtimer(mp, which, (setval) ? &value : NULL,
 			(getval) ? &ovalue : NULL);
+
   		r = OK;
   		break;
 
@@ -144,14 +150,14 @@ int do_itimer(void)
 		(phys_bytes)sizeof(ovalue));
   }
 
-  return r;
+  return(r);
 }
 
 /*===========================================================================*
  *				getset_vtimer				     *
  *===========================================================================*/
-static void getset_vtimer(struct mproc *rmp, int which,
-	const struct itimerval *value, struct itimerval *ovalue)
+static void
+getset_vtimer(struct mproc *rmp, int which, struct itimerval *value, struct itimerval *ovalue)
 {
   clock_t newticks, *nptr;		/* the new timer value, in ticks */
   clock_t oldticks, *optr;		/* the old ticks value, in ticks */
@@ -160,14 +166,14 @@ static void getset_vtimer(struct mproc *rmp, int which,
   /* The default is to provide sys_vtimer with two null pointers, i.e. to do
    * nothing at all.
    */
-  optr = NULL;
-  nptr = NULL;
+  optr = nptr = NULL;
 
   /* If the old timer value is to be retrieved, have 'optr' point to the
    * location where the old value is to be stored, and copy the interval.
    */
   if (ovalue != NULL) {
   	optr = &oldticks;
+
   	timeval_from_ticks(&ovalue->it_interval, rmp->mp_interval[which]);
   }
 
@@ -182,7 +188,8 @@ static void getset_vtimer(struct mproc *rmp, int which,
   	if (newticks <= 0)
   		rmp->mp_interval[which] = 0;
 	else
-		rmp->mp_interval[which] = ticks_from_timeval(&value->it_interval);
+		rmp->mp_interval[which] =
+			ticks_from_timeval(&value->it_interval);
   }
 
   /* Find out which kernel timer number to use. */
@@ -211,9 +218,10 @@ static void getset_vtimer(struct mproc *rmp, int which,
 /*===========================================================================*
  *				check_vtimer				     *
  *===========================================================================*/
-void check_vtimer(int proc_nr, int sig)
+void
+check_vtimer(int proc_nr, int sig)
 {
-  struct mproc *rmp;
+  register struct mproc *rmp;
   int which, num;
 
   rmp = &mproc[proc_nr];
@@ -228,17 +236,15 @@ void check_vtimer(int proc_nr, int sig)
   /* If a repetition interval was set for this virtual timer, tell the
    * kernel to set a new timeout for the virtual timer.
    */
-  if (rmp->mp_interval[which] > 0) {
-  	if (sys_vtimer(rmp->mp_endpoint, num, &rmp->mp_interval[which], NULL) != OK) {
-		panic("check_vtimer: sys_vtimer failed");
-	}
-  }
+  if (rmp->mp_interval[which] > 0)
+  	sys_vtimer(rmp->mp_endpoint, num, &rmp->mp_interval[which], NULL);
 }
 
 /*===========================================================================*
  *				get_realtimer				     *
  *===========================================================================*/
-static void get_realtimer(struct mproc *rmp, struct itimerval *value)
+static void
+get_realtimer(struct mproc *rmp, struct itimerval *value)
 {
   clock_t exptime;	/* time at which alarm will expire */
   clock_t uptime;	/* current system time */
@@ -269,7 +275,8 @@ static void get_realtimer(struct mproc *rmp, struct itimerval *value)
 /*===========================================================================*
  *				set_realtimer				     *
  *===========================================================================*/
-static void set_realtimer(struct mproc *rmp, const struct itimerval *value)
+static void
+set_realtimer(struct mproc *rmp, struct itimerval *value)
 {
   clock_t ticks;	/* New amount of ticks to the next alarm. */
   clock_t interval;	/* New amount of ticks for the alarm's interval. */
@@ -289,7 +296,9 @@ static void set_realtimer(struct mproc *rmp, const struct itimerval *value)
 /*===========================================================================*
  *				set_alarm				     *
  *===========================================================================*/
-void set_alarm(struct mproc *rmp, clock_t ticks)
+void set_alarm(rmp, ticks)
+struct mproc *rmp;		/* process that wants the alarm */
+clock_t ticks;			/* how many ticks delay before the signal */
 {
   if (ticks > 0) {
 	assert(ticks <= TMRDIFF_MAX);
@@ -304,10 +313,11 @@ void set_alarm(struct mproc *rmp, clock_t ticks)
 /*===========================================================================*
  *				cause_sigalrm				     *
  *===========================================================================*/
-static void cause_sigalrm(int arg)
+static void
+cause_sigalrm(int arg)
 {
   int proc_nr_n;
-  struct mproc *rmp;
+  register struct mproc *rmp;
 
   /* get process from timer */
   if(pm_isokendpt(arg, &proc_nr_n) != OK) {
@@ -330,5 +340,5 @@ static void cause_sigalrm(int arg)
 
   mp = &mproc[0];		/* pretend the signal comes from PM */
 
-  check_sig(rmp->mp_pid, SIGALRM, false /* ksig */);
+  check_sig(rmp->mp_pid, SIGALRM, FALSE /* ksig */);
 }
