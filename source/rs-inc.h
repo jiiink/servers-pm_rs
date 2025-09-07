@@ -4,6 +4,9 @@
  *    Jul 22, 2005	by Jorrit N. Herder 
  */
 
+#ifndef RS_INC_H
+#define RS_INC_H
+
 #define _SYSTEM		1    /* get OK and negative error codes */
 
 #include <sys/types.h>
@@ -53,4 +56,7 @@
 #include "type.h"
 #include "glo.h"
 
-EXTERN int do_sef_lu_request(message *m_ptr);
+/* Function prototype declaration */
+int do_sef_lu_request(message *m_ptr);
+
+#endif /* RS_INC_H */

@@ -15,7 +15,7 @@
 #include "kernel/proc.h"
 
 /*===========================================================================*
- *				init_scheduling				     *
+ *				sched_init				     *
  *===========================================================================*/
 void sched_init(void)
 {
@@ -23,30 +23,27 @@ void sched_init(void)
 	endpoint_t parent_e;
 	int proc_nr, s;
 
-	for (proc_nr=0, trmp=mproc; proc_nr < NR_PROCS; proc_nr++, trmp++) {
-		/* Don't take over system processes. When the system starts,
-		 * init is blocked on RTS_NO_QUANTUM until PM assigns a
-		 * scheduler, from which other. Given that all other user
-		 * processes are forked from init and system processes are
-		 * managed by RS, there should be no other process that needs
-		 * to be assigned a scheduler here */
-		if (trmp->mp_flags & IN_USE && !(trmp->mp_flags & PRIV_PROC)) {
-			assert(_ENDPOINT_P(trmp->mp_endpoint) == INIT_PROC_NR);
-			parent_e = mproc[trmp->mp_parent].mp_endpoint;
-			assert(parent_e == trmp->mp_endpoint);
-			s = sched_start(SCHED_PROC_NR,	/* scheduler_e */
-				trmp->mp_endpoint,	/* schedulee_e */
-				parent_e,		/* parent_e */
-				USER_Q, 		/* maxprio */
-				USER_QUANTUM, 		/* quantum */
-				-1,			/* don't change cpu */
-				&trmp->mp_scheduler);	/* *newsched_e */
-			if (s != OK) {
-				printf("PM: SCHED denied taking over scheduling of %s: %d\n",
-					trmp->mp_name, s);
-			}
+	/* Initialize scheduling for all user processes */
+	for (proc_nr = 0, trmp = mproc; proc_nr < NR_PROCS; proc_nr++, trmp++) {
+		/* Skip unused and system processes */
+		if (!(trmp->mp_flags & IN_USE) || (trmp->mp_flags & PRIV_PROC)) {
+			continue;
 		}
- 	}
+
+		/* Only INIT should need scheduling setup at startup */
+		assert(_ENDPOINT_P(trmp->mp_endpoint) == INIT_PROC_NR);
+
+		parent_e = mproc[trmp->mp_parent].mp_endpoint;
+		assert(parent_e == trmp->mp_endpoint);
+
+		/* Start scheduling */
+		s = sched_start(SCHED_PROC_NR, trmp->mp_endpoint, parent_e,
+		               USER_Q, USER_QUANTUM, -1, &trmp->mp_scheduler);
+		if (s != OK) {
+			printf("PM: SCHED denied taking over scheduling of %s: %d\n",
+			       trmp->mp_name, s);
+		}
+	}
 }
 
 /*===========================================================================*
@@ -58,16 +55,17 @@ int sched_start_user(endpoint_t ep, struct mproc *rmp)
 	endpoint_t inherit_from;
 	int rv;
 
-	/* convert nice to priority */
-	if ((rv = nice_to_priority(rmp->mp_nice, &maxprio)) != OK) {
+	if (rmp == NULL) {
+		return EINVAL;
+	}
+
+	/* Convert nice to priority */
+	rv = nice_to_priority(rmp->mp_nice, &maxprio);
+	if (rv != OK) {
 		return rv;
 	}
 
-	/* scheduler must know the parent, which is not the case for a child
-	 * of a system process created by a regular fork; in this case the
-	 * scheduler should inherit settings from init rather than the real
-	 * parent
-	 */
+	/* Determine inheritance source */
 	if (mproc[rmp->mp_parent].mp_flags & PRIV_PROC) {
 		assert(mproc[rmp->mp_parent].mp_scheduler == NONE);
 		inherit_from = INIT_PROC_NR;
@@ -75,12 +73,9 @@ int sched_start_user(endpoint_t ep, struct mproc *rmp)
 		inherit_from = mproc[rmp->mp_parent].mp_endpoint;
 	}
 
-	/* inherit quantum */
-	return sched_inherit(ep, 			/* scheduler_e */
-		rmp->mp_endpoint, 			/* schedulee_e */
-		inherit_from, 				/* parent_e */
-		maxprio, 				/* maxprio */
-		&rmp->mp_scheduler);			/* *newsched_e */
+	/* Inherit scheduling settings */
+	return sched_inherit(ep, rmp->mp_endpoint, inherit_from,
+	                    maxprio, &rmp->mp_scheduler);
 }
 
 /*===========================================================================*
@@ -92,21 +87,30 @@ int sched_nice(struct mproc *rmp, int nice)
 	message m;
 	unsigned maxprio;
 
-	/* If the kernel is the scheduler, we don't allow messing with the
-	 * priority. If you want to control process priority, assign the process
-	 * to a user-space scheduler */
-	if (rmp->mp_scheduler == KERNEL || rmp->mp_scheduler == NONE)
-		return (EINVAL);
+	if (rmp == NULL) {
+		return EINVAL;
+	}
 
-	if ((rv = nice_to_priority(nice, &maxprio)) != OK) {
+	/* Cannot adjust kernel-scheduled processes */
+	if (rmp->mp_scheduler == KERNEL || rmp->mp_scheduler == NONE) {
+		return EINVAL;
+	}
+
+	/* Convert nice to priority */
+	rv = nice_to_priority(nice, &maxprio);
+	if (rv != OK) {
 		return rv;
 	}
 
-	m.m_pm_sched_scheduling_set_nice.endpoint	= rmp->mp_endpoint;
-	m.m_pm_sched_scheduling_set_nice.maxprio	= maxprio;
-	if ((rv = _taskcall(rmp->mp_scheduler, SCHEDULING_SET_NICE, &m))) {
+	/* Send request to scheduler */
+	memset(&m, 0, sizeof(m));
+	m.m_pm_sched_scheduling_set_nice.endpoint = rmp->mp_endpoint;
+	m.m_pm_sched_scheduling_set_nice.maxprio = maxprio;
+
+	rv = _taskcall(rmp->mp_scheduler, SCHEDULING_SET_NICE, &m);
+	if (rv != OK) {
 		return rv;
 	}
 
-	return (OK);
+	return OK;
 }

@@ -13,17 +13,17 @@
 /* The boot image priv table. This table has entries for all system
  * services in the boot image.
  */
-extern struct boot_image_priv boot_image_priv_table[];
+extern const struct boot_image_priv boot_image_priv_table[];
 
 /* The boot image sys table. This table has entries for system services in
  * the boot image that override default sys properties.
  */
-extern struct boot_image_sys boot_image_sys_table[];
+extern const struct boot_image_sys boot_image_sys_table[];
 
 /* The boot image dev table. This table has entries for system services in
  * the boot image that support dev properties.
  */
-extern struct boot_image_dev boot_image_dev_table[];
+extern const struct boot_image_dev boot_image_dev_table[];
 
 /* The system process table. This table only has entries for system
  * services (servers and drivers), and thus is not directly indexed by
@@ -55,4 +55,3 @@ EXTERN unsigned system_hz;
 EXTERN struct machine machine;		/* machine info */
 
 #endif /* RS_GLO_H */
-

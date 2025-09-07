@@ -42,7 +42,8 @@
 #define RS_CLEANUP_SCRIPT 0x4000   /* run script at cleanup time */
 #define RS_REINCARNATE    0x8000   /* after exit, restart with a new endpoint */
 
-#define RS_SRV_IS_IDLE(S) (((S)->r_flags & RS_DEAD) || ((S)->r_flags & ~(RS_IN_USE|RS_ACTIVE|RS_CLEANUP_DETACH|RS_CLEANUP_SCRIPT)) == 0)
+#define RS_SRV_IS_IDLE(S) (((S)->r_flags & RS_DEAD) != 0 || \
+    ((S)->r_flags & ~(RS_IN_USE|RS_ACTIVE|RS_CLEANUP_DETACH|RS_CLEANUP_SCRIPT)) == 0)
 
 /* Constants determining RS period and binary exponential backoff. */
 #define RS_INIT_T	(system_hz * 10)	/* allow T ticks for init */
@@ -55,7 +56,7 @@
 #define END_RPROC_ADDR  (&rproc[NR_SYS_PROCS])
 
 /* Constants for live update. */
-#define RS_DEFAULT_PREPARE_MAXTIME 2*RS_DELTA_T   /* default prepare max time */
+#define RS_DEFAULT_PREPARE_MAXTIME (2*RS_DELTA_T)   /* default prepare max time */
 
 /* Definitions for boot info tables. */
 #define NULL_BOOT_NR    NR_BOOT_PROCS        /* marks a null boot entry */
@@ -68,7 +69,7 @@
 #define VM_SF    (SRVR_SF)     			/* vm */
 
 /* Shorthands. */
-#define SRV_OR_USR(rp, X, Y) (rp->r_priv.s_flags & SYS_PROC ? X : Y)
+#define SRV_OR_USR(rp, X, Y) (((rp)->r_priv.s_flags & SYS_PROC) != 0 ? (X) : (Y))
 
 /* Reply flags. */
 #define RS_DONTREPLY    0
@@ -89,34 +90,38 @@
 
 /* Note that we have 'B' last in order to allow 'continue' statements */
 #define RUPDATE_ITER(HEAD, RPUPD_PREV, RPUPD, B) do { \
-        for(RPUPD = HEAD, RPUPD_PREV = NULL; RPUPD != NULL; \
-          RPUPD_PREV = RPUPD, RPUPD = RPUPD->next_rpupd) { \
+        for((RPUPD) = (HEAD), (RPUPD_PREV) = NULL; (RPUPD) != NULL; \
+          (RPUPD_PREV) = (RPUPD), (RPUPD) = (RPUPD)->next_rpupd) { \
             B \
         } \
      } while(0)
 #define RUPDATE_REV_ITER(TAIL, RPUPD_PREV, RPUPD, B) do { \
-        RPUPD = TAIL; \
-        for(RPUPD = TAIL; RPUPD != NULL; RPUPD = RPUPD->prev_rpupd) { \
-            RPUPD_PREV = RPUPD->prev_rpupd; \
+        (RPUPD) = (TAIL); \
+        for((RPUPD) = (TAIL); (RPUPD) != NULL; (RPUPD) = (RPUPD)->prev_rpupd) { \
+            (RPUPD_PREV) = (RPUPD)->prev_rpupd; \
             B \
         } \
      } while(0)
 
-#define RUPDATE_IS_UPDATING() (rupdate.flags & RS_UPDATING)
-#define RUPDATE_IS_VM_UPDATING() ((rupdate.flags & RS_UPDATING) && rupdate.vm_rpupd)
-#define RUPDATE_IS_VM_INIT_DONE() (rproc_ptr[_ENDPOINT_P(VM_PROC_NR)]->r_flags & RS_INIT_DONE)
-#define RUPDATE_IS_RS_UPDATING() ((rupdate.flags & RS_UPDATING) && rupdate.rs_rpupd)
-#define RUPDATE_IS_RS_INIT_DONE() (rproc_ptr[_ENDPOINT_P(RS_PROC_NR)]->r_flags & RS_INIT_DONE)
-#define RUPDATE_IS_INITIALIZING() (rupdate.flags & RS_INITIALIZING)
-#define RUPDATE_IS_UPD_SCHEDULED() (rupdate.num_rpupds > 0 && !RUPDATE_IS_UPDATING())
+#define RUPDATE_IS_UPDATING() ((rupdate.flags & RS_UPDATING) != 0)
+#define RUPDATE_IS_VM_UPDATING() (((rupdate.flags & RS_UPDATING) != 0) && (rupdate.vm_rpupd != NULL))
+#define RUPDATE_IS_VM_INIT_DONE() ((rproc_ptr[_ENDPOINT_P(VM_PROC_NR)]->r_flags & RS_INIT_DONE) != 0)
+#define RUPDATE_IS_RS_UPDATING() (((rupdate.flags & RS_UPDATING) != 0) && (rupdate.rs_rpupd != NULL))
+#define RUPDATE_IS_RS_INIT_DONE() ((rproc_ptr[_ENDPOINT_P(RS_PROC_NR)]->r_flags & RS_INIT_DONE) != 0)
+#define RUPDATE_IS_INITIALIZING() ((rupdate.flags & RS_INITIALIZING) != 0)
+#define RUPDATE_IS_UPD_SCHEDULED() ((rupdate.num_rpupds > 0) && !RUPDATE_IS_UPDATING())
 #define RUPDATE_IS_UPD_MULTI() (rupdate.num_rpupds > 1)
-#define RUPDATE_IS_UPD_VM_MULTI() (rupdate.vm_rpupd && RUPDATE_IS_UPD_MULTI())
-#define SRV_IS_UPDATING(RP) ((RP)->r_flags & RS_UPDATING)
-#define SRV_IS_UPDATING_AND_INITIALIZING(RP) (((RP)->r_flags & (RS_UPDATING|RS_INITIALIZING)) == (RS_UPDATING|RS_INITIALIZING))
-#define UPD_INIT_MAXTIME(RPUPD) ((RPUPD)->prepare_maxtime != RS_DEFAULT_PREPARE_MAXTIME ? (RPUPD)->prepare_maxtime : RS_INIT_T)
-#define UPD_IS_PREPARING_ONLY(RPUPD) ((RPUPD)->lu_flags & SEF_LU_PREPARE_ONLY)
-#define SRV_IS_PREPARING_ONLY(RP) ((RP)->r_upd.rp && UPD_IS_PREPARING_ONLY(&(RP)->r_upd))
-#define UPD_IS_UPD_SCHEDULED(RPUPD) (RUPDATE_IS_UPD_SCHEDULED() && (RPUPD)->rp)
+#define RUPDATE_IS_UPD_VM_MULTI() ((rupdate.vm_rpupd != NULL) && RUPDATE_IS_UPD_MULTI())
+#define SRV_IS_UPDATING(RP) (((RP)->r_flags & RS_UPDATING) != 0)
+#define SRV_IS_UPDATING_AND_INITIALIZING(RP) \
+    (((RP)->r_flags & (RS_UPDATING|RS_INITIALIZING)) == (RS_UPDATING|RS_INITIALIZING))
+#define UPD_INIT_MAXTIME(RPUPD) \
+    ((RPUPD)->prepare_maxtime != RS_DEFAULT_PREPARE_MAXTIME ? \
+     (RPUPD)->prepare_maxtime : RS_INIT_T)
+#define UPD_IS_PREPARING_ONLY(RPUPD) (((RPUPD)->lu_flags & SEF_LU_PREPARE_ONLY) != 0)
+#define SRV_IS_PREPARING_ONLY(RP) \
+    ((RP)->r_upd.rp != NULL && UPD_IS_PREPARING_ONLY(&(RP)->r_upd))
+#define UPD_IS_UPD_SCHEDULED(RPUPD) (RUPDATE_IS_UPD_SCHEDULED() && (RPUPD)->rp != NULL)
 #define SRV_IS_UPD_SCHEDULED(RP) UPD_IS_UPD_SCHEDULED(&(RP)->r_upd)
 
 #endif /* RS_CONST_H */

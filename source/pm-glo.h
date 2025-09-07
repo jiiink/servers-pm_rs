@@ -14,7 +14,8 @@ extern struct utsname uts_val;	/* uname info */
 
 /* The parameters of the call are kept here. */
 EXTERN message m_in;		/* the incoming message itself is kept here. */
-EXTERN int who_p, who_e;	/* caller's proc number, endpoint */
+EXTERN int who_p;
+EXTERN int who_e;	/* caller's proc number, endpoint */
 EXTERN int call_nr;		/* system call number */
 
 extern int (* const call_vec[])(void);
