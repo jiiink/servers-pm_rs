@@ -1,25 +1,15 @@
 
 #include "inc.h"
 
-/* Static function declarations */
-static void end_update_curr(struct rprocupd *rpupd, int result, int reply_flag);
-static void end_update_before_prepare(struct rprocupd *rpupd, int result);
-static void end_update_prepare_done(struct rprocupd *rpupd, int result);
-static void end_update_initializing(struct rprocupd *rpupd, int result);
-static void end_update_rev_iter(int result, int reply_flag,
-    struct rprocupd *skip_rpupd, struct rprocupd *only_rpupd);
-
 /*===========================================================================*
  *			      rupdate_clear_upds			     *
  *===========================================================================*/
-void rupdate_clear_upds(void)
+void rupdate_clear_upds()
 {
   /* Clear the update chain and the global update descriptor. */
-  struct rprocupd *prev_rpupd = NULL;
-  struct rprocupd *rpupd = NULL;
-  
+  struct rprocupd *prev_rpupd, *rpupd;
   RUPDATE_ITER(rupdate.first_rpupd, prev_rpupd, rpupd,
-      if(prev_rpupd != NULL) {
+      if(prev_rpupd) {
           rupdate_upd_clear(prev_rpupd);
       }
   );
@@ -33,8 +23,7 @@ void rupdate_clear_upds(void)
 void rupdate_add_upd(struct rprocupd* rpupd)
 {
   /* Add an update descriptor to the update chain. */
-  struct rprocupd *prev_rpupd = NULL;
-  struct rprocupd *walk_rpupd = NULL;
+  struct rprocupd *prev_rpupd, *walk_rpupd;
   endpoint_t ep;
   int lu_flags;
 
@@ -46,20 +35,17 @@ void rupdate_add_upd(struct rprocupd* rpupd)
 
   ep = rpupd->rp->r_pub->endpoint;
 
-  assert(rpupd != NULL);
   assert(rpupd->next_rpupd == NULL);
   assert(rpupd->prev_rpupd == NULL);
 
   /* Determine what element to insert after, if not at the head. */
   prev_rpupd = rupdate.last_rpupd;
   if (prev_rpupd != NULL && ep != RS_PROC_NR &&
-    prev_rpupd->rp->r_pub->endpoint == RS_PROC_NR) {
+    prev_rpupd->rp->r_pub->endpoint == RS_PROC_NR)
       prev_rpupd = prev_rpupd->prev_rpupd;
-  }
   if (prev_rpupd != NULL && ep != RS_PROC_NR && ep != VM_PROC_NR &&
-    prev_rpupd->rp->r_pub->endpoint == VM_PROC_NR) {
+    prev_rpupd->rp->r_pub->endpoint == VM_PROC_NR)
       prev_rpupd = prev_rpupd->prev_rpupd;
-  }
 
   /* Perform the insertion. */
   if (prev_rpupd == NULL) {
@@ -71,17 +57,16 @@ void rupdate_add_upd(struct rprocupd* rpupd)
       prev_rpupd->next_rpupd = rpupd;
   }
 
-  if (rpupd->next_rpupd != NULL) {
+  if (rpupd->next_rpupd != NULL)
       rpupd->next_rpupd->prev_rpupd = rpupd;
-  } else {
+  else
       rupdate.last_rpupd = rpupd;
-  }
 
   rupdate.num_rpupds++;
 
   /* Propagate relevant flags from the new descriptor. */
   lu_flags = rpupd->lu_flags & (SEF_LU_INCLUDES_VM|SEF_LU_INCLUDES_RS|SEF_LU_MULTI);
-  if(lu_flags != 0) {
+  if(lu_flags) {
       RUPDATE_ITER(rupdate.first_rpupd, prev_rpupd, walk_rpupd,
           walk_rpupd->lu_flags |= lu_flags;
           walk_rpupd->init_flags |= lu_flags;
@@ -89,10 +74,10 @@ void rupdate_add_upd(struct rprocupd* rpupd)
   }
 
   /* Set VM/RS update descriptor pointers. */
-  if(rupdate.vm_rpupd == NULL && (lu_flags & SEF_LU_INCLUDES_VM) != 0) {
+  if(!rupdate.vm_rpupd && (lu_flags & SEF_LU_INCLUDES_VM)) {
       rupdate.vm_rpupd = rpupd;
   }
-  else if(rupdate.rs_rpupd == NULL && (lu_flags & SEF_LU_INCLUDES_RS) != 0) {
+  else if(!rupdate.rs_rpupd && (lu_flags & SEF_LU_INCLUDES_RS)) {
       rupdate.rs_rpupd = rpupd;
   }
 }
@@ -109,7 +94,7 @@ void rupdate_set_new_upd_flags(struct rprocupd* rpupd)
   }
 
   /* Propagate relevant flags from last service under update (if any). */
-  if(rupdate.last_rpupd != NULL) {
+  if(rupdate.last_rpupd) {
       int lu_flags = rupdate.last_rpupd->lu_flags & (SEF_LU_INCLUDES_VM|SEF_LU_INCLUDES_RS);
       rpupd->lu_flags |= lu_flags;
       rpupd->init_flags |= lu_flags;
@@ -136,11 +121,7 @@ void rupdate_set_new_upd_flags(struct rprocupd* rpupd)
 void rupdate_upd_init(struct rprocupd* rpupd, struct rproc *rp)
 {
   /* Initialize an update descriptor for a given service. */
-  if(rpupd == NULL) {
-      return;
-  }
-  
-  memset(rpupd, 0, sizeof(*rpupd));
+  memset(rpupd, 0, sizeof(*(rpupd)));
   rpupd->prepare_state_data_gid = GRANT_INVALID;
   rpupd->prepare_state_data.ipcf_els_gid = GRANT_INVALID;
   rpupd->prepare_state_data.eval_gid = GRANT_INVALID;
@@ -154,11 +135,7 @@ void rupdate_upd_init(struct rprocupd* rpupd, struct rproc *rp)
 void rupdate_upd_clear(struct rprocupd* rpupd)
 {
   /* Clear an update descriptor. */
-  if(rpupd == NULL) {
-      return;
-  }
-  
-  if(rpupd->rp != NULL && rpupd->rp->r_new_rp != NULL) {
+  if(rpupd->rp->r_new_rp) {
       cleanup_service(rpupd->rp->r_new_rp);
   }
   if(rpupd->prepare_state_data_gid != GRANT_INVALID) {
@@ -171,14 +148,14 @@ void rupdate_upd_clear(struct rprocupd* rpupd)
       if(rpupd->prepare_state_data.eval_gid != GRANT_INVALID) {
           cpf_revoke(rpupd->prepare_state_data.eval_gid);
       }
-      if(rpupd->prepare_state_data.ipcf_els != NULL) {
+      if(rpupd->prepare_state_data.ipcf_els) {
           free(rpupd->prepare_state_data.ipcf_els);
       }
-      if(rpupd->prepare_state_data.eval_addr != NULL) {
+      if(rpupd->prepare_state_data.eval_addr) {
           free(rpupd->prepare_state_data.eval_addr);
       }
   }
-  rupdate_upd_init(rpupd, NULL);
+  rupdate_upd_init(rpupd,NULL);
 }
 
 /*===========================================================================*
@@ -187,29 +164,17 @@ void rupdate_upd_clear(struct rprocupd* rpupd)
 void rupdate_upd_move(struct rproc* src_rp, struct rproc* dst_rp)
 {
   /* Move an update descriptor from one service instance to another. */
-  if(src_rp == NULL || dst_rp == NULL) {
-      return;
-  }
-  
   dst_rp->r_upd = src_rp->r_upd;
   dst_rp->r_upd.rp = dst_rp;
-  if(src_rp->r_new_rp != NULL) {
-      assert(dst_rp->r_new_rp == NULL);
+  if(src_rp->r_new_rp) {
+      assert(!dst_rp->r_new_rp);
       dst_rp->r_new_rp = src_rp->r_new_rp;
       dst_rp->r_new_rp->r_old_rp = dst_rp;
   }
-  if(dst_rp->r_upd.prev_rpupd != NULL) {
-      dst_rp->r_upd.prev_rpupd->next_rpupd = &dst_rp->r_upd;
-  }
-  if(dst_rp->r_upd.next_rpupd != NULL) {
-      dst_rp->r_upd.next_rpupd->prev_rpupd = &dst_rp->r_upd;
-  }
-  if(rupdate.first_rpupd == &src_rp->r_upd) {
-      rupdate.first_rpupd = &dst_rp->r_upd;
-  }
-  if(rupdate.last_rpupd == &src_rp->r_upd) {
-      rupdate.last_rpupd = &dst_rp->r_upd;
-  }
+  if(dst_rp->r_upd.prev_rpupd) dst_rp->r_upd.prev_rpupd->next_rpupd = &dst_rp->r_upd;
+  if(dst_rp->r_upd.next_rpupd) dst_rp->r_upd.next_rpupd->prev_rpupd = &dst_rp->r_upd;
+  if(rupdate.first_rpupd == &src_rp->r_upd) rupdate.first_rpupd = &dst_rp->r_upd;
+  if(rupdate.last_rpupd == &src_rp->r_upd) rupdate.last_rpupd = &dst_rp->r_upd;
   rupdate_upd_init(&src_rp->r_upd, NULL);
   src_rp->r_new_rp = NULL;
 }
@@ -225,43 +190,37 @@ void request_prepare_update_service_debug(char *file, int line,
   struct rprocpub *rpub;
   int no_reply;
 
-  if(rp == NULL) {
-      return;
-  }
-  
   rpub = rp->r_pub;
 
   if(state != SEF_LU_STATE_NULL) {
       struct rprocupd *rpupd = &rp->r_upd;
       rpupd->prepare_tm = getticks();
       if(!UPD_IS_PREPARING_ONLY(rpupd)) {
-          assert(rp->r_new_rp != NULL);
+          assert(rp->r_new_rp);
           rp->r_flags |= RS_UPDATING;
           rp->r_new_rp->r_flags |= RS_UPDATING;
       }
       else {
-          assert(rp->r_new_rp == NULL);
+          assert(!rp->r_new_rp);
       }
 
       m.m_rs_update.flags = rpupd->lu_flags;
       m.m_rs_update.state_data_gid = rpupd->prepare_state_data_gid;
 
-      if(rs_verbose) {
+      if(rs_verbose)
           printf("RS: %s being requested to prepare for the %s at %s:%d\n", 
               srv_to_string(rp), srv_upd_to_string(rpupd), file, line);
-      }
   }
   else {
-      if(rs_verbose) {
+      if(rs_verbose)
           printf("RS: %s being requested to cancel the update at %s:%d\n", 
               srv_to_string(rp), file, line);
-      }
   }
 
   /* Request to prepare for the update or cancel the update. */
   m.m_type = RS_LU_PREPARE;
   m.m_rs_update.state = state;
-  no_reply = (rp->r_flags & RS_PREPARE_DONE) == 0;
+  no_reply = !(rp->r_flags & RS_PREPARE_DONE);
   rs_asynsend(rp, &m, no_reply);
 }
 
@@ -279,22 +238,19 @@ int srv_update(endpoint_t src_e, endpoint_t dst_e, int sys_upd_flags)
    * handle updates at state transfer time and rollbacks afterwards.
    */
   if(src_e == VM_PROC_NR) {
-      if(rs_verbose) {
+      if(rs_verbose)
           printf("RS: executing sys_update(%d, %d)\n", src_e, dst_e);
-      }
       r = sys_update(src_e, dst_e,
-          (sys_upd_flags & SF_VM_ROLLBACK) != 0 ? SYS_UPD_ROLLBACK : 0);
+          sys_upd_flags & SF_VM_ROLLBACK ? SYS_UPD_ROLLBACK : 0);
   }
   else if(!RUPDATE_IS_UPD_VM_MULTI() || RUPDATE_IS_VM_INIT_DONE()) {
-       if(rs_verbose) {
+       if(rs_verbose)
            printf("RS: executing vm_update(%d, %d)\n", src_e, dst_e);
-       }
        r = vm_update(src_e, dst_e, sys_upd_flags);
    }
    else {
-       if(rs_verbose) {
+       if(rs_verbose)
            printf("RS: skipping srv_update(%d, %d)\n", src_e, dst_e);
-       }
    }
 
   return r;
@@ -303,8 +259,11 @@ int srv_update(endpoint_t src_e, endpoint_t dst_e, int sys_upd_flags)
 /*===========================================================================*
  *				update_service				     *
  *===========================================================================*/
-int update_service(struct rproc **src_rpp, struct rproc **dst_rpp,
-    int swap_flag, int sys_upd_flags)
+int update_service(src_rpp, dst_rpp, swap_flag, sys_upd_flags)
+struct rproc **src_rpp;
+struct rproc **dst_rpp;
+int swap_flag;
+int sys_upd_flags;
 {
 /* Update an existing service. */
   int r;
@@ -315,29 +274,18 @@ int update_service(struct rproc **src_rpp, struct rproc **dst_rpp,
   int pid;
   endpoint_t endpoint;
 
-  if(src_rpp == NULL || dst_rpp == NULL) {
-      return EINVAL;
-  }
-  
   src_rp = *src_rpp;
   dst_rp = *dst_rpp;
-  
-  if(src_rp == NULL || dst_rp == NULL) {
-      return EINVAL;
-  }
-  
   src_rpub = src_rp->r_pub;
   dst_rpub = dst_rp->r_pub;
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: %s updating into %s\n",
           srv_to_string(src_rp), srv_to_string(dst_rp));
-  }
 
   /* Swap the slots of the two processes when asked to. */
   if(swap_flag == RS_SWAP) {
-      r = srv_update(src_rpub->endpoint, dst_rpub->endpoint, sys_upd_flags);
-      if(r != OK) {
+      if((r = srv_update(src_rpub->endpoint, dst_rpub->endpoint, sys_upd_flags)) != OK) {
           return r;
       }
   }
@@ -357,14 +305,10 @@ int update_service(struct rproc **src_rpp, struct rproc **dst_rpp,
   rproc_ptr[_ENDPOINT_P(dst_rp->r_pub->endpoint)] = dst_rp;
 
   /* Update in-RS priv structs */
-  r = sys_getpriv(&src_rp->r_priv, src_rp->r_pub->endpoint);
-  if(r != OK) {
-      panic("RS: update: could not update RS copies of priv of src: %d\n", r);
-  }
-  r = sys_getpriv(&dst_rp->r_priv, dst_rp->r_pub->endpoint);
-  if(r != OK) {
-      panic("RS: update: could not update RS copies of priv of dst: %d\n", r);
-  }
+  if ((r = sys_getpriv(&src_rp->r_priv, src_rp->r_pub->endpoint)) != OK)
+    panic("RS: update: could not update RS copies of priv of src: %d\n", r);
+  if ((r = sys_getpriv(&dst_rp->r_priv, dst_rp->r_pub->endpoint)) != OK)
+    panic("RS: update: could not update RS copies of priv of dst: %d\n", r);
 
   /* Adjust input pointers. */
   *src_rpp = src_rp;
@@ -373,10 +317,9 @@ int update_service(struct rproc **src_rpp, struct rproc **dst_rpp,
   /* Make the new version active. */
   activate_service(dst_rp, src_rp);
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: %s updated into %s\n",
           srv_to_string(src_rp), srv_to_string(dst_rp));
-  }
 
   return OK;
 }
@@ -390,37 +333,28 @@ void rollback_service(struct rproc **new_rpp, struct rproc **old_rpp)
   struct rproc *rp;
   int r = OK;
 
-  if(new_rpp == NULL || old_rpp == NULL) {
-      return;
-  }
-
   /* RS is special, we may only need to swap the slots to rollback. */
   if((*old_rpp)->r_pub->endpoint == RS_PROC_NR) {
       endpoint_t me = NONE;
       char name[20];
-      int priv_flags;
-      int init_flags;
+      int priv_flags, init_flags;
 
       r = sys_whoami(&me, name, sizeof(name), &priv_flags, &init_flags);
       assert(r == OK);
       if(me != RS_PROC_NR) {
           r = vm_update((*new_rpp)->r_pub->endpoint, (*old_rpp)->r_pub->endpoint, SF_VM_ROLLBACK);
-          if(rs_verbose) {
+          if(rs_verbose)
               printf("RS: %s performed rollback\n", srv_to_string(*new_rpp));
-          }
       }
       /* Since we may now have missed heartbeat replies, resend requests. */
-      for (rp = BEG_RPROC_ADDR; rp < END_RPROC_ADDR; rp++) {
-          if ((rp->r_flags & RS_ACTIVE) != 0) {
+      for (rp = BEG_RPROC_ADDR; rp < END_RPROC_ADDR; rp++)
+          if (rp->r_flags & RS_ACTIVE)
               rp->r_check_tm = 0;
-          }
-      }
   }
   else {
-      int swap_flag = (((*new_rpp)->r_flags & RS_INIT_PENDING) != 0) ? RS_DONTSWAP : RS_SWAP;
-      if(rs_verbose) {
+      int swap_flag = ((*new_rpp)->r_flags & RS_INIT_PENDING ? RS_DONTSWAP : RS_SWAP);
+      if(rs_verbose)
           printf("RS: %s performs rollback\n", srv_to_string(*new_rpp));
-      }
       if(swap_flag == RS_SWAP) {
           /* Freeze the new instance to rollback safely. */
           sys_privctl((*new_rpp)->r_pub->endpoint, SYS_PRIV_DISALLOW, NULL);
@@ -437,34 +371,19 @@ void rollback_service(struct rproc **new_rpp, struct rproc **old_rpp)
 void update_period(message *m_ptr)
 {
   /* Periodically check the status of the update (preparation phase). */
-  clock_t now;
+  clock_t now = m_ptr->m_notify.timestamp;
   short has_update_timed_out;
+  message m;
   struct rprocupd *rpupd;
   struct rproc *rp;
   struct rprocpub *rpub;
 
-  if(m_ptr == NULL) {
-      return;
-  }
-  
-  now = m_ptr->m_notify.timestamp;
   rpupd = rupdate.curr_rpupd;
-  
-  if(rpupd == NULL) {
-      return;
-  }
-  
   rp = rpupd->rp;
-  
-  if(rp == NULL) {
-      return;
-  }
-  
   rpub = rp->r_pub;
 
   /* See if a timeout has occurred. */
-  has_update_timed_out = (rpupd->prepare_maxtime > 0) && 
-                        ((now - rpupd->prepare_tm) > rpupd->prepare_maxtime);
+  has_update_timed_out = (rpupd->prepare_maxtime > 0) && (now - rpupd->prepare_tm > rpupd->prepare_maxtime);
 
   /* If an update timed out, end the update process and notify
    * the old version that the update has been canceled. From now on, the old
@@ -482,10 +401,8 @@ void update_period(message *m_ptr)
 int start_update_prepare(int allow_retries)
 {
   /* Start the preparation phase of the update process. */
-  struct rprocupd *prev_rpupd = NULL;
-  struct rprocupd *rpupd = NULL;
-  struct rproc *rp;
-  struct rproc *new_rp;
+  struct rprocupd *prev_rpupd, *rpupd;
+  struct rproc *rp, *new_rp;
   int r;
 
   if(!RUPDATE_IS_UPD_SCHEDULED()) {
@@ -499,16 +416,15 @@ int start_update_prepare(int allow_retries)
       return EAGAIN;
   }
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: starting the preparation phase of the update process\n");
-  }
 
-  if(rupdate.rs_rpupd != NULL) {
+  if(rupdate.rs_rpupd) {
       assert(rupdate.rs_rpupd == rupdate.last_rpupd);
       assert(rupdate.rs_rpupd->rp->r_pub->endpoint == RS_PROC_NR);
       assert(!UPD_IS_PREPARING_ONLY(rupdate.rs_rpupd));
   }
-  if(rupdate.vm_rpupd != NULL) {
+  if(rupdate.vm_rpupd) {
       assert(rupdate.vm_rpupd->rp->r_pub->endpoint == VM_PROC_NR);
       assert(!UPD_IS_PREPARING_ONLY(rupdate.vm_rpupd));
   }
@@ -522,12 +438,12 @@ int start_update_prepare(int allow_retries)
           if(!UPD_IS_PREPARING_ONLY(rpupd)) {
               rp = rpupd->rp;
               new_rp = rp->r_new_rp;
-              assert(rp != NULL && new_rp != NULL);
+              assert(rp && new_rp);
               rp->r_pub->old_endpoint = rpupd->state_endpoint;
               rp->r_pub->new_endpoint = rp->r_pub->endpoint;
               if(rpupd != rupdate.vm_rpupd && rpupd != rupdate.rs_rpupd) {
                   rp->r_pub->sys_flags |= SF_VM_UPDATE;
-                  if((rpupd->lu_flags & SEF_LU_NOMMAP) != 0) {
+                  if(rpupd->lu_flags & SEF_LU_NOMMAP) {
                       rp->r_pub->sys_flags |= SF_VM_NOMMAP;
                   }
               }
@@ -548,22 +464,19 @@ int start_update_prepare(int allow_retries)
 /*===========================================================================*
  *			  start_update_prepare_next			     *
  *===========================================================================*/
-struct rprocupd* start_update_prepare_next(void)
+struct rprocupd* start_update_prepare_next()
 {
   /* Request the next service in the update chain to prepare for the update. */
-  struct rprocupd *rpupd;
-  struct rprocupd *prev_rpupd = NULL;
-  struct rprocupd *walk_rpupd = NULL;
-  struct rproc *rp;
-  struct rproc *new_rp;
+  struct rprocupd *rpupd, *prev_rpupd, *walk_rpupd;
+  struct rproc *rp, *new_rp;
 
   if(!RUPDATE_IS_UPDATING()) {
       rpupd = rupdate.first_rpupd;
   }
   else {
-      rpupd = rupdate.curr_rpupd != NULL ? rupdate.curr_rpupd->next_rpupd : NULL;
+      rpupd = rupdate.curr_rpupd->next_rpupd;
   }
-  if(rpupd == NULL) {
+  if(!rpupd) {
       return NULL;
   }
 
@@ -578,19 +491,16 @@ struct rprocupd* start_update_prepare_next(void)
        * this service) is not going to create problems from here on.
        */
       RUPDATE_ITER(rupdate.first_rpupd, prev_rpupd, walk_rpupd,
-          if (UPD_IS_PREPARING_ONLY(walk_rpupd)) {
+          if (UPD_IS_PREPARING_ONLY(walk_rpupd))
               continue; /* skip prepare-only processes */
-          }
-          if (walk_rpupd == rupdate.vm_rpupd) {
+          if (walk_rpupd == rupdate.vm_rpupd)
               continue; /* skip VM */
-          }
           rp = walk_rpupd->rp;
           new_rp = rp->r_new_rp;
-          assert(rp != NULL && new_rp != NULL);
-          if (rs_verbose) {
+          assert(rp && new_rp);
+          if (rs_verbose)
               printf("RS: preparing VM for %s -> %s\n", srv_to_string(rp),
                 srv_to_string(new_rp));
-          }
           /* Ask VM to prepare the new instance based on the old instance. */
           vm_prepare(rp->r_pub->new_endpoint, new_rp->r_pub->endpoint,
             rp->r_pub->sys_flags);
@@ -599,14 +509,14 @@ struct rprocupd* start_update_prepare_next(void)
 
   rupdate.flags |= RS_UPDATING;
 
-  while(rpupd != NULL) {
+  while(1) {
       rupdate.curr_rpupd = rpupd;
       request_prepare_update_service(rupdate.curr_rpupd->rp, rupdate.curr_rpupd->prepare_state);
       if(!UPD_IS_PREPARING_ONLY(rpupd)) {
           /* Continue only if the current service requires a prepare-only update. */
           break;
       }
-      if(rupdate.curr_rpupd->next_rpupd == NULL) {
+      if(!rupdate.curr_rpupd->next_rpupd) {
           /* Continue only if there are services left. */
           break;
       }
@@ -619,24 +529,21 @@ struct rprocupd* start_update_prepare_next(void)
 /*===========================================================================*
  *				start_update				     *
  *===========================================================================*/
-int start_update(void)
+int start_update()
 {
   /* Start the update phase of the update process. */
-  struct rprocupd *prev_rpupd = NULL;
-  struct rprocupd *rpupd = NULL;
-  int r;
-  int init_ready_pending = 0;
+  struct rprocupd *prev_rpupd, *rpupd;
+  int r, init_ready_pending=0;
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: starting a %s-component update process\n",
           RUPDATE_IS_UPD_MULTI() ? "multi" : "single");
-  }
 
   assert(RUPDATE_IS_UPDATING());
   assert(rupdate.num_rpupds > 0);
   assert(rupdate.num_init_ready_pending == 0);
-  assert(rupdate.first_rpupd != NULL);
-  assert(rupdate.last_rpupd != NULL);
+  assert(rupdate.first_rpupd);
+  assert(rupdate.last_rpupd);
   assert(rupdate.curr_rpupd == rupdate.last_rpupd);
   rupdate.flags |= RS_INITIALIZING;
 
@@ -654,7 +561,7 @@ int start_update(void)
   RUPDATE_ITER(rupdate.first_rpupd, prev_rpupd, rpupd,
       rupdate.curr_rpupd = rpupd;
       if(!UPD_IS_PREPARING_ONLY(rpupd)) {
-          init_ready_pending = 1;
+          init_ready_pending=1;
           r = start_srv_update(rpupd);
           if(r != OK) {
               return r;
@@ -669,7 +576,7 @@ int start_update(void)
   );
 
   /* End update if there is nothing more to do. */
-  if (init_ready_pending == 0) {
+  if (!init_ready_pending) {
       end_update(OK, 0);
       return OK;
   }
@@ -678,18 +585,17 @@ int start_update(void)
   if(RUPDATE_IS_UPD_VM_MULTI()) {
       message m;
       /* Check VM initialization, assume failure after timeout. */
-      if (rs_verbose) {
+      if (rs_verbose)
           printf("RS: waiting for VM to initialize...\n");
-      }
       r = rs_receive_ticks(VM_PROC_NR, &m, NULL, UPD_INIT_MAXTIME(rupdate.vm_rpupd));
       if(r != OK || m.m_type != RS_INIT || m.m_rs_init.result != OK) {
-          r = (r == OK && m.m_type == RS_INIT) ? m.m_rs_init.result : EINTR;
+          r = (r == OK && m.m_type == RS_INIT ? m.m_rs_init.result : EINTR);
           m.m_source = VM_PROC_NR;
           m.m_type = RS_INIT;
           m.m_rs_init.result = r;
       }
       do_init_ready(&m);
-      /* If initialization was successful, complete the update. */
+      /* If initialization was successfull, complete the update. */
       if(r == OK) {
           /* Reply and unblock VM immediately. */
           m.m_type = OK;
@@ -715,30 +621,20 @@ int start_update(void)
 int start_srv_update(struct rprocupd *rpupd)
 {
   /* Start updating a single service given its update descriptor. */
-  struct rproc *old_rp;
-  struct rproc *new_rp;
-  int r;
-  int sys_upd_flags = 0;
+  struct rproc *old_rp, *new_rp;
+  int r, sys_upd_flags = 0;
 
-  if(rpupd == NULL) {
-      return EINVAL;
-  }
-  
   old_rp = rpupd->rp;
-  new_rp = old_rp != NULL ? old_rp->r_new_rp : NULL;
-  
-  if(old_rp == NULL || new_rp == NULL) {
-      return EINVAL;
-  }
+  new_rp = old_rp->r_new_rp;
+  assert(old_rp && new_rp);
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: %s starting the %s\n", srv_to_string(old_rp), srv_upd_to_string(rpupd));
-  }
 
   rupdate.num_init_ready_pending++;
   new_rp->r_flags |= RS_INITIALIZING;
   new_rp->r_flags |= RS_INIT_PENDING;
-  if((rpupd->lu_flags & SEF_LU_NOMMAP) != 0) {
+  if(rpupd->lu_flags & SEF_LU_NOMMAP) {
       sys_upd_flags |= SF_VM_NOMMAP;
   }
 
@@ -761,24 +657,15 @@ int start_srv_update(struct rprocupd *rpupd)
 int complete_srv_update(struct rprocupd *rpupd)
 {
   /* Complete update of a service given its update descriptor. */
-  struct rproc *old_rp;
-  struct rproc *new_rp;
+  struct rproc *old_rp, *new_rp;
   int r;
 
-  if(rpupd == NULL) {
-      return EINVAL;
-  }
-  
   old_rp = rpupd->rp;
-  new_rp = old_rp != NULL ? old_rp->r_new_rp : NULL;
-  
-  if(old_rp == NULL || new_rp == NULL) {
-      return EINVAL;
-  }
+  new_rp = old_rp->r_new_rp;
+  assert(old_rp && new_rp);
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: %s completing the %s\n", srv_to_string(old_rp), srv_upd_to_string(rpupd));
-  }
 
   new_rp->r_flags &= ~RS_INIT_PENDING;
 
@@ -788,9 +675,8 @@ int complete_srv_update(struct rprocupd *rpupd)
       if(r != OK) {
           panic("unable to initialize the new RS instance: %d", r);
       }
-      if(rs_verbose) {
+      if(rs_verbose)
       	  printf("RS: %s is the new RS instance we'll yield control to\n", srv_to_string(new_rp));
-      }
       r = sys_privctl(new_rp->r_pub->endpoint, SYS_PRIV_YIELD, NULL);
       if(r != OK) {
           panic("unable to yield control to the new RS instance: %d", r);
@@ -831,17 +717,16 @@ int abort_update_proc(int reason)
       return EINVAL;
   }
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: aborting the %s update process prematurely\n",
           is_updating ? "in-progress" : "scheduled");
-  }
 
   if(!is_updating) {
       rupdate_clear_upds();
       return OK;
   }
 
-  if((rupdate.flags & RS_INITIALIZING) != 0) {
+  if(rupdate.flags & RS_INITIALIZING) {
       /* Pretend the current service under update failed to initialize. */
       end_update(reason, RS_REPLY); 
   }
@@ -859,22 +744,12 @@ int abort_update_proc(int reason)
 static void end_update_curr(struct rprocupd *rpupd, int result, int reply_flag)
 {
   /* Execute the requested action on the current service under update. */
-  struct rproc *old_rp;
-  struct rproc *new_rp;
-  
-  if(rpupd == NULL) {
-      return;
-  }
-  
+  struct rproc *old_rp, *new_rp;
   assert(rpupd == rupdate.curr_rpupd);
 
   old_rp = rpupd->rp;
-  new_rp = old_rp != NULL ? old_rp->r_new_rp : NULL;
-  
-  if(old_rp == NULL || new_rp == NULL) {
-      return;
-  }
-  
+  new_rp = old_rp->r_new_rp;
+  assert(old_rp && new_rp);
   if(result != OK && SRV_IS_UPDATING_AND_INITIALIZING(new_rp) && rpupd != rupdate.rs_rpupd) {
       /* Rollback in case of failures at initialization time. */
       rollback_service(&new_rp, &old_rp);
@@ -890,22 +765,12 @@ static void end_update_before_prepare(struct rprocupd *rpupd, int result)
   /* The service is still waiting for the update. Cleanup the new version and
    * keep the old version running.
    */
-  struct rproc *old_rp;
-  struct rproc *new_rp;
-  
-  if(rpupd == NULL) {
-      return;
-  }
-  
+  struct rproc *old_rp, *new_rp;
   assert(result != OK);
 
   old_rp = rpupd->rp;
-  new_rp = old_rp != NULL ? old_rp->r_new_rp : NULL;
-  
-  if(old_rp == NULL || new_rp == NULL) {
-      return;
-  }
-  
+  new_rp = old_rp->r_new_rp;
+  assert(old_rp && new_rp);
   cleanup_service(new_rp);
 }
 
@@ -917,13 +782,9 @@ static void end_update_prepare_done(struct rprocupd *rpupd, int result)
   /* The service is blocked after preparing for the update. Unblock it
    * and cleanup the new version.
    */
-  if(rpupd == NULL) {
-      return;
-  }
-  
   assert(!RUPDATE_IS_INITIALIZING());
   assert(result != OK);
-  assert((rpupd->rp->r_flags & RS_INITIALIZING) == 0);
+  assert(!(rpupd->rp->r_flags & RS_INITIALIZING));
 
   end_srv_update(rpupd, result, RS_REPLY);
 }
@@ -933,23 +794,14 @@ static void end_update_prepare_done(struct rprocupd *rpupd, int result)
  *===========================================================================*/
 static void end_update_initializing(struct rprocupd *rpupd, int result)
 {
-  /* The service is initializing after a live update. Cleanup the version that
+  /* The service is initializing after a live udate. Cleanup the version that
    * has to die out and let the other version run.
    */
-  struct rproc *old_rp;
-  struct rproc *new_rp;
+  struct rproc *old_rp, *new_rp;
 
-  if(rpupd == NULL) {
-      return;
-  }
-  
   old_rp = rpupd->rp;
-  new_rp = old_rp != NULL ? old_rp->r_new_rp : NULL;
-  
-  if(old_rp == NULL || new_rp == NULL) {
-      return;
-  }
-  
+  new_rp = old_rp->r_new_rp;
+  assert(old_rp && new_rp);
   assert(SRV_IS_UPDATING_AND_INITIALIZING(new_rp));
   if(result != OK && rpupd != rupdate.rs_rpupd) {
       /* Rollback in case of failures at initialization time. */
@@ -965,20 +817,18 @@ static void end_update_rev_iter(int result, int reply_flag,
     struct rprocupd *skip_rpupd, struct rprocupd *only_rpupd)
 {
   /* End the update for all the requested services. */
-  struct rprocupd *prev_rpupd = NULL;
-  struct rprocupd *rpupd = NULL;
-  short is_curr;
-  short is_before_curr;
-  short is_after_curr = 1;
+  struct rprocupd *prev_rpupd, *rpupd;
+  short is_curr, is_before_curr, is_after_curr;
 
+  is_after_curr = 1;
   RUPDATE_REV_ITER(rupdate.last_rpupd, prev_rpupd, rpupd,
-      is_curr = (rupdate.curr_rpupd == rpupd) ? 1 : 0;
-      is_after_curr = (short)(is_after_curr && !is_curr);
+      is_curr = (rupdate.curr_rpupd == rpupd);
+      is_after_curr = is_after_curr && !is_curr;
       if(!UPD_IS_PREPARING_ONLY(rpupd)) {
           short is_before_prepare;
           short is_prepare_done;
           short is_initializing;
-          is_before_curr = (short)(!is_curr && !is_after_curr);
+          is_before_curr = !is_curr && !is_after_curr;
           if(RUPDATE_IS_INITIALIZING()) {
               is_before_prepare = 0;
               is_prepare_done = is_after_curr;
@@ -989,20 +839,19 @@ static void end_update_rev_iter(int result, int reply_flag,
               is_prepare_done = is_before_curr;
               is_initializing = 0;
           }
-          if((skip_rpupd == NULL || rpupd != skip_rpupd) && 
-             (only_rpupd == NULL || rpupd == only_rpupd)) {
+          if((!skip_rpupd || rpupd != skip_rpupd) && (!only_rpupd || rpupd == only_rpupd)) {
               /* Analyze different cases. */
-              if(is_curr != 0) {
+              if(is_curr) {
                   end_update_curr(rpupd, result, reply_flag);
               }
-              else if(is_before_prepare != 0) {
+              else if(is_before_prepare) {
                   end_update_before_prepare(rpupd, result);
               }
-              else if(is_prepare_done != 0) {
+              else if(is_prepare_done) {
                   end_update_prepare_done(rpupd, result);
               }
               else {
-                  assert(is_initializing != 0);
+                  assert(is_initializing);
                   end_update_initializing(rpupd, result);
               }
           }
@@ -1013,30 +862,27 @@ static void end_update_rev_iter(int result, int reply_flag,
 /*===========================================================================*
  *			    end_update_debug				     *
  *===========================================================================*/
-void end_update_debug(char *file, int line, int result, int reply_flag)
+void end_update_debug(char *file, int line,
+    int result, int reply_flag)
 {
   /* End an in-progress update process. */
-  struct rprocupd *prev_rpupd = NULL;
-  struct rprocupd *rpupd = NULL;
-  struct rproc *rp;
-  struct rproc *new_rp;
-  int slot_nr;
+  struct rprocupd *prev_rpupd, *rpupd, *rpupd_it;
+  struct rproc *rp, *old_rp, *new_rp;
+  int i, r, slot_nr;
 
   assert(RUPDATE_IS_UPDATING());
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: %s ending the update: result=%d, reply=%d at %s:%d\n",
           srv_to_string(rupdate.curr_rpupd->rp), result, (reply_flag==RS_REPLY),
           file, line);
-  }
 
   /* If the new instance of RS is active and the update failed, ending
    * the update couldn't be any easier.
    */
   if(result != OK && RUPDATE_IS_RS_INIT_DONE()) {
-      if(rs_verbose) {
+      if(rs_verbose)
           printf("RS: update failed, new RS instance will now exit\n");
-      }
       exit(1);
   }
 
@@ -1052,13 +898,13 @@ void end_update_debug(char *file, int line, int result, int reply_flag)
 
   /* Handle all the other services now, VM always last to support rollback. */
   end_update_rev_iter(result, reply_flag, rupdate.vm_rpupd, NULL);
-  if(rupdate.vm_rpupd != NULL) {
+  if(rupdate.vm_rpupd) {
       end_update_rev_iter(result, reply_flag, NULL, rupdate.vm_rpupd);
   }
 
   /* End the update and complete initialization in case of success. */
   RUPDATE_ITER(rupdate.first_rpupd, prev_rpupd, rpupd,
-      if(prev_rpupd != NULL) {
+      if(prev_rpupd) {
           rupdate_upd_clear(prev_rpupd);
       }
       if(result == OK && !UPD_IS_PREPARING_ONLY(rpupd)) {
@@ -1094,25 +940,15 @@ void end_srv_update(struct rprocupd *rpupd, int result, int reply_flag)
  *    continue executing. In addition, reset the check timestamp, so that if the
  *    service has a period, a status request will be forced in the next period.
  */
-  struct rproc *old_rp;
-  struct rproc *new_rp;
-  struct rproc *exiting_rp;
-  struct rproc *surviving_rp;
+  struct rproc *old_rp, *new_rp, *exiting_rp, *surviving_rp;
   struct rproc **rps;
-  int nr_rps;
-  int i;
+  
+  struct rprocpub *rpub;
+  int nr_rps, i;
 
-  if(rpupd == NULL) {
-      return;
-  }
-  
   old_rp = rpupd->rp;
-  new_rp = old_rp != NULL ? old_rp->r_new_rp : NULL;
-  
-  if(old_rp == NULL || new_rp == NULL) {
-      return;
-  }
-  
+  new_rp = old_rp->r_new_rp;
+  assert(old_rp && new_rp);
   if(result == OK && new_rp->r_pub->endpoint == VM_PROC_NR && RUPDATE_IS_UPD_MULTI()) {
       /* VM has already been replied to in case of multi-component live update.
        * Send an update cancel message to trigger cleanup.
@@ -1120,14 +956,13 @@ void end_srv_update(struct rprocupd *rpupd, int result, int reply_flag)
       reply_flag = RS_CANCEL;
   }
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: ending update from %s to %s with result=%d, reply=%d\n",
           srv_to_string(old_rp), srv_to_string(new_rp), result, (reply_flag==RS_REPLY));
-  }
 
   /* Decide which version has to die out and which version has to survive. */
-  surviving_rp = (result == OK) ? new_rp : old_rp;
-  exiting_rp =   (result == OK) ? old_rp : new_rp;
+  surviving_rp = (result == OK ? new_rp : old_rp);
+  exiting_rp =   (result == OK ? old_rp : new_rp);
   surviving_rp->r_flags &= ~RS_INITIALIZING;
   surviving_rp->r_check_tm = 0;
   surviving_rp->r_alive_tm = getticks();
@@ -1149,15 +984,15 @@ void end_srv_update(struct rprocupd *rpupd, int result, int reply_flag)
       reply(surviving_rp->r_pub->endpoint, surviving_rp, &m);
   }
   else if(reply_flag == RS_CANCEL) {
-      if((surviving_rp->r_flags & RS_TERMINATED) == 0) {
+      if(!(surviving_rp->r_flags & RS_TERMINATED)) {
           request_prepare_update_service(surviving_rp, SEF_LU_STATE_NULL);
       }
   }
 
   /* Cleanup or detach the version that has to die out. */
   get_service_instances(exiting_rp, &rps, &nr_rps);
-  for(i = 0; i < nr_rps; i++) {
-      if(rps[i] == old_rp && (rpupd->lu_flags & SEF_LU_DETACHED) != 0) {
+  for(i=0;i<nr_rps;i++) {
+      if(rps[i] == old_rp && (rpupd->lu_flags & SEF_LU_DETACHED)) {
           message m;
           m.m_type = EDEADEPT;
           rps[i]->r_flags |= RS_CLEANUP_DETACH;
@@ -1169,9 +1004,8 @@ void end_srv_update(struct rprocupd *rpupd, int result, int reply_flag)
       }
   }
 
-  if(rs_verbose) {
+  if(rs_verbose)
       printf("RS: %s ended the %s\n", srv_to_string(surviving_rp),
           srv_upd_to_string(rpupd));
-  }
 }
 

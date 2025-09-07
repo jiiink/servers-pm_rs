@@ -3,33 +3,30 @@
 #ifndef RS_TYPE_H
 #define RS_TYPE_H
 
-#include <stddef.h>
-#include <sys/types.h>
-#include <minix/rs.h>
-
 /* Definition of an entry of the boot image priv table. */
 struct boot_image_priv {
   endpoint_t endpoint;         /* process endpoint number */
   char label[RS_MAX_LABEL_LEN]; /* label to assign to this service */
+
   int flags;                   /* privilege flags */
 };
 
 /* Definition of an entry of the boot image sys table. */
 struct boot_image_sys {
   endpoint_t endpoint;         /* process endpoint number */
+
   int flags;                   /* system flags */
 };
 
 /* Definition of an entry of the boot image dev table. */
 struct boot_image_dev {
   endpoint_t endpoint;         /* process endpoint number */
+
   dev_t dev_nr;                /* major device number */
 };
 
-/* Forward declarations */
-struct rproc;
-
 /* Definition of the update descriptors. */
+struct rproc;
 struct rprocupd {
   int lu_flags;		   /* user-specified live update flags */
   int init_flags;		   /* user-specified init flags */
@@ -43,8 +40,6 @@ struct rprocupd {
   struct rprocupd *prev_rpupd;   /* the previous process under update */
   struct rprocupd *next_rpupd;   /* the next process under update */
 };
-
-/* Update manager structure */
 struct rupdate {
   int flags;               /* flags to keep track of the status of the update */
   int num_rpupds;          /* number of descriptors scheduled for the update */
@@ -58,7 +53,6 @@ struct rupdate {
 
 /* Definition of an entry of the system process table. */
 typedef struct priv ixfer_priv_s;
-
 struct rproc {
   struct rprocpub *r_pub;       /* pointer to the corresponding public entry */
   struct rproc *r_old_rp;       /* pointer to the slot with the old version */
@@ -83,9 +77,7 @@ struct rproc {
 
   char r_cmd[MAX_COMMAND_LEN];	/* raw command plus arguments */
   char r_args[MAX_COMMAND_LEN];	/* null-separated raw command plus arguments */
-  
-  /* Argv elements: path, args, null terminator */
-  #define ARGV_ELEMENTS (MAX_NR_ARGS + 2)
+#define ARGV_ELEMENTS (MAX_NR_ARGS+2) /* path, args, null */
   char *r_argv[ARGV_ELEMENTS];
   int r_argc;  			/* number of arguments */
   char r_script[MAX_SCRIPT_LEN]; /* name of the restart script executable */
@@ -93,12 +85,14 @@ struct rproc {
   char *r_exec;			/* Executable image */ 
   size_t r_exec_len;		/* Length of image */
 
-  ixfer_priv_s r_priv;		/* Privilege structure to be passed to the kernel */
-  uid_t r_uid;			/* User ID */
+  ixfer_priv_s r_priv;		/* Privilege structure to be passed to the
+				 * kernel.
+				 */
+  uid_t r_uid;
   endpoint_t r_scheduler;	/* scheduler */
   int r_priority;		/* negative values are reserved for special meanings */
-  int r_quantum;		/* Time quantum */
-  int r_cpu;			/* CPU affinity */
+  int r_quantum;
+  int r_cpu;
   vir_bytes r_map_prealloc_addr; /* preallocated mmap address */
   size_t r_map_prealloc_len;     /* preallocated mmap len */
 
@@ -114,3 +108,5 @@ struct rproc {
 };
 
 #endif /* RS_TYPE_H */
+
+

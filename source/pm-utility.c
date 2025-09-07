@@ -31,7 +31,7 @@
 /*===========================================================================*
  *				get_free_pid				     *
  *===========================================================================*/
-pid_t get_free_pid(void)
+pid_t get_free_pid()
 {
   static pid_t next_pid = INIT_PID + 1;		/* next pid to be assigned */
   register struct mproc *rmp;			/* check process table */
@@ -40,53 +40,49 @@ pid_t get_free_pid(void)
   /* Find a free pid for the child and put it in the table. */
   do {
 	t = 0;
-	next_pid = (next_pid < NR_PIDS) ? (next_pid + 1) : (INIT_PID + 1);
-	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
+	next_pid = (next_pid < NR_PIDS ? next_pid + 1 : INIT_PID + 1);
+	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++)
 		if (rmp->mp_pid == next_pid || rmp->mp_procgrp == next_pid) {
 			t = 1;
 			break;
 		}
-	}
   } while (t);					/* 't' = 0 means pid free */
-  return next_pid;
+  return(next_pid);
 }
 
 /*===========================================================================*
  *				find_param				     *
  *===========================================================================*/
-char *find_param(const char *name)
+char *
+find_param(const char *name)
 {
   register const char *namep;
   register char *envp;
 
   for (envp = (char *) monitor_params; *envp != 0;) {
-	for (namep = name; *namep != 0 && *namep == *envp; namep++, envp++) {
+	for (namep = name; *namep != 0 && *namep == *envp; namep++, envp++)
 		;
-	}
-	if (*namep == '\0' && *envp == '=') {
-		return envp + 1;
-	}
-	while (*envp++ != 0) {
+	if (*namep == '\0' && *envp == '=')
+		return(envp + 1);
+	while (*envp++ != 0)
 		;
-	}
   }
-  return NULL;
+  return(NULL);
 }
 
 /*===========================================================================*
  *				find_proc  				     *
  *===========================================================================*/
-struct mproc *find_proc(pid_t lpid)
+struct mproc *find_proc(lpid)
+pid_t lpid;
 {
   register struct mproc *rmp;
 
-  for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
-	if ((rmp->mp_flags & IN_USE) && rmp->mp_pid == lpid) {
-		return rmp;
-	}
-  }
+  for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++)
+	if ((rmp->mp_flags & IN_USE) && rmp->mp_pid == lpid)
+		return(rmp);
 
-  return NULL;
+  return(NULL);
 }
 
 /*===========================================================================*
@@ -94,22 +90,16 @@ struct mproc *find_proc(pid_t lpid)
  *===========================================================================*/
 int nice_to_priority(int nice, unsigned* new_q)
 {
-	if (nice < PRIO_MIN || nice > PRIO_MAX) {
-		return EINVAL;
-	}
+	if (nice < PRIO_MIN || nice > PRIO_MAX) return(EINVAL);
 
-	*new_q = MAX_USER_Q + ((nice - PRIO_MIN) * (MIN_USER_Q - MAX_USER_Q + 1)) /
-	    (PRIO_MAX - PRIO_MIN + 1);
+	*new_q = MAX_USER_Q + (nice-PRIO_MIN) * (MIN_USER_Q-MAX_USER_Q+1) /
+	    (PRIO_MAX-PRIO_MIN+1);
 
 	/* Neither of these should ever happen. */
-	if ((signed) *new_q < MAX_USER_Q) {
-		*new_q = MAX_USER_Q;
-	}
-	if (*new_q > MIN_USER_Q) {
-		*new_q = MIN_USER_Q;
-	}
+	if ((signed) *new_q < MAX_USER_Q) *new_q = MAX_USER_Q;
+	if (*new_q > MIN_USER_Q) *new_q = MIN_USER_Q;
 
-	return OK;
+	return (OK);
 }
 
 /*===========================================================================*
@@ -118,35 +108,32 @@ int nice_to_priority(int nice, unsigned* new_q)
 int pm_isokendpt(int endpoint, int *proc)
 {
 	*proc = _ENDPOINT_P(endpoint);
-	if (*proc < 0 || *proc >= NR_PROCS) {
+	if (*proc < 0 || *proc >= NR_PROCS)
 		return EINVAL;
-	}
-	if (endpoint != mproc[*proc].mp_endpoint) {
+	if (endpoint != mproc[*proc].mp_endpoint)
 		return EDEADEPT;
-	}
-	if (!(mproc[*proc].mp_flags & IN_USE)) {
+	if (!(mproc[*proc].mp_flags & IN_USE))
 		return EDEADEPT;
-	}
 	return OK;
 }
 
 /*===========================================================================*
  *				tell_vfs			 	     *
  *===========================================================================*/
-void tell_vfs(struct mproc *rmp, message *m_ptr)
+void tell_vfs(rmp, m_ptr)
+struct mproc *rmp;
+message *m_ptr;
 {
 /* Send a request to VFS, without blocking.
  */
   int r;
 
-  if (rmp->mp_flags & (VFS_CALL | EVENT_CALL)) {
+  if (rmp->mp_flags & (VFS_CALL | EVENT_CALL))
 	panic("tell_vfs: not idle: %d", m_ptr->m_type);
-  }
 
   r = asynsend3(VFS_PROC_NR, m_ptr, AMF_NOREPLY);
-  if (r != OK) {
+  if (r != OK)
   	panic("unable to send to VFS: %d", r);
-  }
 
   rmp->mp_flags |= VFS_CALL;
 }
@@ -154,7 +141,8 @@ void tell_vfs(struct mproc *rmp, message *m_ptr)
 /*===========================================================================*
  *				set_rusage_times		 	     *
  *===========================================================================*/
-void set_rusage_times(struct rusage * r_usage, clock_t user_time, clock_t sys_time)
+void
+set_rusage_times(struct rusage * r_usage, clock_t user_time, clock_t sys_time)
 {
 	u64_t usec;
 

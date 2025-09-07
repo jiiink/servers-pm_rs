@@ -11,9 +11,9 @@ static int read_seg(struct exec_info *execi, off_t off,
         vir_bytes seg_addr, size_t seg_bytes);
 
 /* Array of loaders for different object formats */
-static const struct exec_loaders {
+static struct exec_loaders {
 	libexec_exec_loadfunc_t load_object;
-} exec_loaders[] = {
+} const exec_loaders[] = {
 	{ libexec_load_elf },
 	{ NULL }
 };
@@ -28,6 +28,7 @@ int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
 	char *frame;
 	struct ps_strings *psp;
 	int vsp = 0;	/* (virtual) Stack pointer in new address space. */
+
 	int r;
 
 	minix_stack_params(argv[0], argv, envp, &frame_size, &overflow,
@@ -40,8 +41,7 @@ int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
 	}
 
 	/* Allocate space for the stack frame. */
-	frame = (char *) sbrk(frame_size);
-	if (frame == (char *) -1) {
+	if ((frame = (char *) sbrk(frame_size)) == (char *) -1) {
 		errno = E2BIG;
 		return -1;
 	}
@@ -89,9 +89,7 @@ static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
 	for(i = 0; exec_loaders[i].load_object != NULL; i++) {
 	    r = (*exec_loaders[i].load_object)(&execi);
 	    /* Loaded successfully, so no need to try other loaders */
-	    if (r == OK) {
-		break;
-	    }
+	    if (r == OK) break;
 	}
 
 	/* No exec loader could load the object */
@@ -101,9 +99,8 @@ static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
 	}
 
 	/* Inform PM */
-        if((r = libexec_pm_newexec(execi.proc_e, &execi)) != OK) {
+        if((r = libexec_pm_newexec(execi.proc_e, &execi)) != OK)
 		return r;
-	}
 
 	/* Patch up stack and copy it from RS to new core image. */
 	vsp = execi.stack_high - frame_len;
@@ -134,9 +131,8 @@ static int exec_restart(int proc_e, int result, vir_bytes pc, vir_bytes ps_str)
 	m.m_rs_pm_exec_restart.ps_str = ps_str;
 
 	r = ipc_sendrec(PM_PROC_NR, &m);
-	if (r != OK) {
+	if (r != OK)
 		return r;
-	}
 
 	return m.m_type;
 }
@@ -144,7 +140,12 @@ static int exec_restart(int proc_e, int result, vir_bytes pc, vir_bytes ps_str)
 /*===========================================================================*
  *                             read_seg                                     *
  *===========================================================================*/
-static int read_seg(struct exec_info *execi, off_t off, vir_bytes seg_addr, size_t seg_bytes)
+static int read_seg(
+struct exec_info *execi,       /* various data needed for exec */
+off_t off,                     /* offset in file */
+vir_bytes seg_addr,            /* address to load segment */
+size_t seg_bytes           /* how much is to be transferred? */
+)
 {
 /*
  * The byte count on read is usually smaller than the segment count, because
@@ -154,12 +155,9 @@ static int read_seg(struct exec_info *execi, off_t off, vir_bytes seg_addr, size
 
   int r;
 
-  if (off + seg_bytes > execi->hdr_len) {
-	return ENOEXEC;
-  }
-  r = sys_datacopy(SELF, ((vir_bytes)execi->hdr) + off,
-  	execi->proc_e, seg_addr, seg_bytes);
-  if (r != OK) {
+  if (off+seg_bytes > execi->hdr_len) return ENOEXEC;
+  if((r= sys_datacopy(SELF, ((vir_bytes)execi->hdr)+off,
+  	execi->proc_e, seg_addr, seg_bytes)) != OK) {
 	printf("RS: exec read_seg: copy 0x%x bytes into %i at 0x%08lx failed: %i\n",
 		(int) seg_bytes, execi->proc_e, seg_addr, r);
   }
