@@ -71,14 +71,13 @@ static unsigned int nested = 0;
  * a process event message to the next subscriber, or resume handling the
  * event itself if there are no more subscribers to notify.
  */
-static void resume_event(struct mproc *rmp)
+static void
+resume_event(struct mproc * rmp)
 {
 	message m;
 	unsigned int i, event;
 	int r;
 
-	if (rmp == NULL) return;
-	
 	assert(rmp->mp_flags & IN_USE);
 	assert(rmp->mp_flags & EVENT_CALL);
 	assert(rmp->mp_eventsub != NO_EVENTSUB);
@@ -95,7 +94,7 @@ static void resume_event(struct mproc *rmp)
 	 * If there are additional services interested in this event, send a
 	 * message to the next one.
 	 */
-	for (i = (unsigned int)rmp->mp_eventsub; i < nsubs; i++, rmp->mp_eventsub++) {
+	for (i = rmp->mp_eventsub; i < nsubs; i++, rmp->mp_eventsub++) {
 		if (subs[i].mask & event) {
 			memset(&m, 0, sizeof(m));
 			m.m_type = PROC_EVENT;
@@ -128,12 +127,11 @@ static void resume_event(struct mproc *rmp)
  * any processes currently subject to process event notification are updated
  * accordingly, in a way that no services are skipped for process events.
  */
-static void remove_sub(unsigned int slot)
+static void
+remove_sub(unsigned int slot)
 {
 	struct mproc *rmp;
 	unsigned int i;
-
-	if (slot >= nsubs) return;
 
 	/* The loop below needs the remaining items to be kept in order. */
 	for (i = slot; i < nsubs - 1; i++)
@@ -169,7 +167,8 @@ static void remove_sub(unsigned int slot)
  * Return OK on success, EPERM if the caller may not register for events, or
  * ENOMEM if all subscriber slots are in use already.
  */
-int do_proceventmask(void)
+int
+do_proceventmask(void)
 {
 	unsigned int i, mask;
 
@@ -206,7 +205,6 @@ int do_proceventmask(void)
 
 	subs[nsubs].endpt = who_e;
 	subs[nsubs].mask = mask;
-	subs[nsubs].waiting = 0;
 	nsubs++;
 
 	return OK;
@@ -217,7 +215,8 @@ int do_proceventmask(void)
  * least that is what should have happened.  First make sure of this, and then
  * resume event handling for the affected process.
  */
-int do_proc_event_reply(void)
+int
+do_proc_event_reply(void)
 {
 	struct mproc *rmp;
 	endpoint_t endpt;
@@ -256,7 +255,7 @@ int do_proc_event_reply(void)
 		    who_e, endpt, rmp->mp_eventsub);
 		return SUSPEND;
 	}
-	i = (unsigned int)rmp->mp_eventsub;
+	i = rmp->mp_eventsub;
 	if (subs[i].endpt != who_e) {
 		printf("PM: proc event reply for %d from %d instead of %d\n",
 		    endpt, who_e, subs[i].endpt);
@@ -314,11 +313,10 @@ int do_proc_event_reply(void)
  * from the process flags.  In addition, if the event is a process exit, also
  * check if it is a subscribing service that died.
  */
-void publish_event(struct mproc *rmp)
+void
+publish_event(struct mproc * rmp)
 {
 	unsigned int i;
-
-	if (rmp == NULL) return;
 
 	assert(nested == 0);
 	assert((rmp->mp_flags & (IN_USE | EVENT_CALL)) == IN_USE);

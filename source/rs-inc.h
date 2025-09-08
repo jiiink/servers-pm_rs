@@ -4,26 +4,18 @@
  *    Jul 22, 2005	by Jorrit N. Herder 
  */
 
-#ifndef RS_INC_H
-#define RS_INC_H
-
 #define _SYSTEM		1    /* get OK and negative error codes */
 
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/ptrace.h>
-#include <sys/param.h>
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
 #include <unistd.h>
 #include <ctype.h>
 #include <fcntl.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <assert.h>
 #include <lib.h>
 
 #include <minix/callnr.h>
@@ -49,12 +41,16 @@
 #include "kernel/priv.h"
 #include "kernel/ipc.h"
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <signal.h>
+#include <assert.h>
+#include <sys/param.h>
+
 #include "proto.h"
 #include "const.h"
 #include "type.h"
 #include "glo.h"
 
-/* Function prototypes for live update */
-extern int do_sef_lu_request(message *m_ptr);
-
-#endif /* RS_INC_H */
+EXTERN int do_sef_lu_request(message *m_ptr);

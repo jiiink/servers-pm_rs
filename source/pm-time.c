@@ -13,13 +13,7 @@
 #include <minix/com.h>
 #include <signal.h>
 #include <sys/time.h>
-#include <errno.h>
 #include "mproc.h"
-
-/* Constants for time validation */
-#define NSEC_PER_SEC	1000000000L
-#define SEC_MIN_VALUE	0
-#define SEC_MAX_VALUE	LONG_MAX
 
 /*===========================================================================*
  *				do_gettime				     *
@@ -31,9 +25,8 @@ do_gettime(void)
   time_t boottime;
   int s;
 
-  if ( (s=getuptime(&ticks, &realtime, &boottime)) != OK) {
-  	panic("do_gettime couldn't get uptime: %d", s);
-  }
+  if ( (s=getuptime(&ticks, &realtime, &boottime)) != OK)
+  	panic("do_time couldn't get uptime: %d", s);
 
   switch (m_in.m_lc_pm_time.clk_id) {
 	case CLOCK_REALTIME:
@@ -50,7 +43,7 @@ do_gettime(void)
   mp->mp_reply.m_pm_lc_time.nsec =
 	(uint32_t) ((clock % system_hz) * 1000000000ULL / system_hz);
 
-  return OK;
+  return(OK);
 }
 
 /*===========================================================================*
@@ -65,7 +58,7 @@ do_getres(void)
 		/* tv_sec is always 0 since system_hz is an int */
 		mp->mp_reply.m_pm_lc_time.sec = 0;
 		mp->mp_reply.m_pm_lc_time.nsec = 1000000000 / system_hz;
-		return OK;
+		return(OK);
 	default:
 		return EINVAL; /* invalid/unsupported clock_id */
   }
@@ -78,30 +71,16 @@ int
 do_settime(void)
 {
   int s;
-  time_t sec;
-  long nsec;
 
   if (mp->mp_effuid != SUPER_USER) {
-      return EPERM;
-  }
-
-  /* Validate input parameters */
-  sec = m_in.m_lc_pm_time.sec;
-  nsec = m_in.m_lc_pm_time.nsec;
-
-  if (sec < SEC_MIN_VALUE || sec > SEC_MAX_VALUE) {
-      return EINVAL;
-  }
-
-  if (nsec < 0 || nsec >= NSEC_PER_SEC) {
-      return EINVAL;
+      return(EPERM);
   }
 
   switch (m_in.m_lc_pm_time.clk_id) {
 	case CLOCK_REALTIME:
 		s = sys_settime(m_in.m_lc_pm_time.now, m_in.m_lc_pm_time.clk_id,
-			sec, nsec);
-		return s;
+			m_in.m_lc_pm_time.sec, m_in.m_lc_pm_time.nsec);
+		return(s);
 	case CLOCK_MONOTONIC: /* monotonic cannot be changed */
 	default:
 		return EINVAL; /* invalid/unsupported clock_id */
@@ -121,7 +100,7 @@ do_time(void)
 
   mp->mp_reply.m_pm_lc_time.sec = tv.tv_sec;
   mp->mp_reply.m_pm_lc_time.nsec = tv.tv_nsec;
-  return OK;
+  return(OK);
 }
 
 /*===========================================================================*
@@ -135,30 +114,18 @@ do_stime(void)
  */
   clock_t uptime, realtime;
   time_t boottime;
-  time_t new_time;
   int s;
 
   if (mp->mp_effuid != SUPER_USER) {
-      return EPERM;
+      return(EPERM);
   }
-
-  new_time = m_in.m_lc_pm_time.sec;
-
-  /* Validate input time */
-  if (new_time < SEC_MIN_VALUE || new_time > SEC_MAX_VALUE) {
-      return EINVAL;
-  }
-
-  if ( (s=getuptime(&uptime, &realtime, &boottime)) != OK) {
+  if ( (s=getuptime(&uptime, &realtime, &boottime)) != OK)
       panic("do_stime couldn't get uptime: %d", s);
-  }
+  boottime = m_in.m_lc_pm_time.sec - (realtime/system_hz);
 
-  boottime = new_time - (realtime/system_hz);
-
-  s = sys_stime(boottime);		/* Tell kernel about boottime */
-  if (s != OK) {
+  s= sys_stime(boottime);		/* Tell kernel about boottime */
+  if (s != OK)
 	panic("pm: sys_stime failed: %d", s);
-  }
 
-  return OK;
+  return(OK);
 }
