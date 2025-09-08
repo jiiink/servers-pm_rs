@@ -11,7 +11,7 @@
  *   do_sigreturn:	perform the SIGRETURN system call
  *   do_sigsuspend:	perform the SIGSUSPEND system call
  *   do_kill:		perform the KILL system call
- *   process_ksig:	process a signal an behalf of the kernel
+ *   process_ksig:	process a signal on behalf of the kernel
  *   sig_proc:		interrupt or terminate a signaled process
  *   check_sig:		check which processes to signal with sig_proc()
  *   check_pending:	check if a pending signal can now be delivered
@@ -28,11 +28,17 @@
 #include <signal.h>
 #include <sys/resource.h>
 #include <assert.h>
+#include <errno.h>
+#include <limits.h>
 #include "mproc.h"
+
+/* Buffer size constants */
+#define MAX_SIGNAL_MSG_SIZE 256
 
 static int unpause(struct mproc *rmp);
 static int sig_send(struct mproc *rmp, int signo);
 static void sig_proc_exit(struct mproc *rmp, int signo);
+static int is_valid_signal(int signo);
 
 /*===========================================================================*
  *				do_sigaction				     *
@@ -46,23 +52,23 @@ int do_sigaction(void)
   assert(!(mp->mp_flags & (PROC_STOPPED | VFS_CALL | UNPAUSED | EVENT_CALL)));
 
   sig_nr = m_in.m_lc_pm_sig.nr;
-  if (sig_nr == SIGKILL) return(OK);
-  if (sig_nr < 1 || sig_nr >= _NSIG) return(EINVAL);
+  if (sig_nr == SIGKILL) return OK;
+  if (!is_valid_signal(sig_nr)) return EINVAL;
 
   svp = &mp->mp_sigact[sig_nr];
   if (m_in.m_lc_pm_sig.oact != 0) {
 	r = sys_datacopy(PM_PROC_NR,(vir_bytes) svp, who_e,
 		m_in.m_lc_pm_sig.oact, (phys_bytes) sizeof(svec));
-	if (r != OK) return(r);
+	if (r != OK) return r;
   }
 
   if (m_in.m_lc_pm_sig.act == 0)
-  	return(OK);
+  	return OK;
 
   /* Read in the sigaction structure. */
   r = sys_datacopy(who_e, m_in.m_lc_pm_sig.act, PM_PROC_NR, (vir_bytes) &svec,
 	  (phys_bytes) sizeof(svec));
-  if (r != OK) return(r);
+  if (r != OK) return r;
 
   if (svec.sa_handler == SIG_IGN) {
 	sigaddset(&mp->mp_ignore, sig_nr);
@@ -82,7 +88,7 @@ int do_sigaction(void)
   mp->mp_sigact[sig_nr].sa_mask = svec.sa_mask;
   mp->mp_sigact[sig_nr].sa_flags = svec.sa_flags;
   mp->mp_sigreturn = m_in.m_lc_pm_sig.ret;
-  return(OK);
+  return OK;
 }
 
 /*===========================================================================*
@@ -148,8 +154,7 @@ int do_sigprocmask(void)
 	break;
 
       default:
-	return(EINVAL);
-	break;
+	return EINVAL;
   }
   return OK;
 }
@@ -167,7 +172,7 @@ int do_sigsuspend(void)
   sigdelset(&mp->mp_sigmask, SIGSTOP);
   mp->mp_flags |= SIGSUSPENDED;
   check_pending(mp);
-  return(SUSPEND);
+  return SUSPEND;
 }
 
 /*===========================================================================*
@@ -188,7 +193,7 @@ int do_sigreturn(void)
 
   r = sys_sigreturn(who_e, (struct sigmsg *)m_in.m_lc_pm_sigset.ctx);
   check_pending(mp);
-  return(r);
+  return r;
 }
 
 /*===========================================================================*
@@ -234,6 +239,11 @@ static int stop_proc(struct mproc *rmp, int may_delay)
  */
   int r;
 
+  if (!rmp) {
+      printf("PM: stop_proc called with NULL pointer\n");
+      return FALSE;
+  }
+
   assert(!(rmp->mp_flags & (PROC_STOPPED | DELAY_CALL | UNPAUSED)));
 
   r = sys_delay_stop(rmp->mp_endpoint);
@@ -244,15 +254,12 @@ static int stop_proc(struct mproc *rmp, int may_delay)
   switch (r) {
   case OK:
 	rmp->mp_flags |= PROC_STOPPED;
-
 	return TRUE;
 
   case EBUSY:
 	if (!may_delay)
 		panic("stop_proc: unexpected delay call");
-
 	rmp->mp_flags |= DELAY_CALL;
-
 	return FALSE;
 
   default:
@@ -267,6 +274,11 @@ static void try_resume_proc(struct mproc *rmp)
 {
 /* Resume the given process if possible. */
   int r;
+
+  if (!rmp) {
+      printf("PM: try_resume_proc called with NULL pointer\n");
+      return;
+  }
 
   assert(rmp->mp_flags & PROC_STOPPED);
 
@@ -301,6 +313,12 @@ int process_ksig(endpoint_t proc_nr_e, int signo)
 	printf("PM: process_ksig: %d?? not ok\n", proc_nr_e);
 	return EDEADEPT; /* process is gone. */
   }
+  
+  if (proc_nr < 0 || proc_nr >= NR_PROCS) {
+      printf("PM: process_ksig: invalid proc_nr %d\n", proc_nr);
+      return EINVAL;
+  }
+  
   rmp = &mproc[proc_nr];
   if ((rmp->mp_flags & (IN_USE | EXITING)) != IN_USE) {
 #if 0
@@ -308,6 +326,7 @@ int process_ksig(endpoint_t proc_nr_e, int signo)
 #endif
 	return EDEADEPT; /* process is gone. */
   }
+  
   proc_id = rmp->mp_pid;
   mp = &mproc[0];			/* pretend signals are from PM */
   mp->mp_procgrp = rmp->mp_procgrp;	/* get process group right */
@@ -358,7 +377,6 @@ int process_ksig(endpoint_t proc_nr_e, int signo)
 	 */
 	if (rmp->mp_flags & (VFS_CALL | EVENT_CALL)) {
 		stop_proc(rmp, FALSE /*may_delay*/);
-
 		return OK;
 	}
 
@@ -403,7 +421,21 @@ sig_proc(
  */
   int slot, badignore;
 
+  if (!rmp) {
+      printf("PM: sig_proc called with NULL pointer\n");
+      return;
+  }
+
+  if (!is_valid_signal(signo)) {
+      printf("PM: sig_proc called with invalid signal %d\n", signo);
+      return;
+  }
+
   slot = (int) (rmp - mproc);
+  if (slot < 0 || slot >= NR_PROCS) {
+      panic("PM: sig_proc: invalid slot calculation: %d", slot);
+  }
+  
   if ((rmp->mp_flags & (IN_USE | EXITING)) != IN_USE) {
 	panic("PM: signal %d sent to exiting process %d\n", signo, slot);
   }
@@ -439,7 +471,7 @@ sig_proc(
 		 * the process must have made a call to PM. Therefore, there
 		 * can be no delay calls in this case.
 		 */
-		stop_proc(rmp, FALSE /*delay_call*/);
+		stop_proc(rmp, FALSE /*may_delay*/);
 	}
 	return;
   }
@@ -468,6 +500,7 @@ sig_proc(
   	if(!SIGS_IS_TERMINATION(signo)) {
 		/* Translate every non-termination sys signal into a message. */
 		message m;
+		memset(&m, 0, sizeof(m));
 		m.m_type = SIGS_SIGNAL_RECEIVED;
 		m.m_pm_lsys_sigs_signal.num = signo;
 		asynsend3(rmp->mp_endpoint, &m, AMF_NOREPLY);
@@ -548,6 +581,11 @@ sig_proc_exit(
 	int signo			/* signal that caused termination */
 )
 {
+  if (!rmp) {
+      printf("PM: sig_proc_exit called with NULL pointer\n");
+      return;
+  }
+
   rmp->mp_sigstatus = (char) signo;
   if (sigismember(&core_sset, signo)) {
 	if(!(rmp->mp_flags & PRIV_PROC)) {
@@ -565,10 +603,7 @@ sig_proc_exit(
 /*===========================================================================*
  *				check_sig				     *
  *===========================================================================*/
-int check_sig(proc_id, signo, ksig)
-pid_t proc_id;			/* pid of proc to sig, or 0 or -1, or -pgrp */
-int signo;			/* signal to send to process (0 to _NSIG-1) */
-int ksig;			/* non-zero means signal comes from kernel  */
+int check_sig(pid_t proc_id, int signo, int ksig)
 {
 /* Check to see if it is possible to send a signal.  The signal may have to be
  * sent to a group of processes.  This routine is invoked by the KILL system
@@ -579,10 +614,12 @@ int ksig;			/* non-zero means signal comes from kernel  */
   int count;			/* count # of signals sent */
   int error_code;
 
-  if (signo < 0 || signo >= _NSIG) return(EINVAL);
+  if (!is_valid_signal(signo)) {
+      return EINVAL;
+  }
 
   /* Return EINVAL for attempts to send SIGKILL to INIT alone. */
-  if (proc_id == INIT_PID && signo == SIGKILL) return(EINVAL);
+  if (proc_id == INIT_PID && signo == SIGKILL) return EINVAL;
 
   /* Signal RS first when broadcasting SIGTERM. */
   if (proc_id == -1 && signo == SIGTERM)
@@ -641,7 +678,7 @@ int ksig;			/* non-zero means signal comes from kernel  */
   }
 
   /* If the calling process has killed itself, don't reply. */
-  if ((mp->mp_flags & (IN_USE | EXITING)) != IN_USE) return(SUSPEND);
+  if ((mp->mp_flags & (IN_USE | EXITING)) != IN_USE) return SUSPEND;
   return(count > 0 ? OK : error_code);
 }
 
@@ -660,6 +697,11 @@ check_pending(register struct mproc *rmp)
    */
   int i;
   int ksig;
+
+  if (!rmp) {
+      printf("PM: check_pending called with NULL pointer\n");
+      return;
+  }
 
   for (i = 1; i < _NSIG; i++) {
 	if (sigismember(&rmp->mp_sigpending, i) &&
@@ -689,6 +731,11 @@ restart_sigs(struct mproc *rmp)
 {
 /* VFS has replied to a request from us; do signal-related work.
  */
+
+  if (!rmp) {
+      printf("PM: restart_sigs called with NULL pointer\n");
+      return;
+  }
 
   if (rmp->mp_flags & (VFS_CALL | EVENT_CALL | EXITING)) return;
 
@@ -728,12 +775,16 @@ unpause(
  */
   message m;
 
+  if (!rmp) {
+      printf("PM: unpause called with NULL pointer\n");
+      return FALSE;
+  }
+
   assert(!(rmp->mp_flags & (VFS_CALL | EVENT_CALL)));
 
   /* If the UNPAUSED flag is set, VFS replied to an earlier unpause request. */
   if (rmp->mp_flags & UNPAUSED) {
 	assert((rmp->mp_flags & (DELAY_CALL | PROC_STOPPED)) == PROC_STOPPED);
-
 	return TRUE;
   }
 
@@ -748,7 +799,6 @@ unpause(
 	 * No delay calls: we know for a fact that the process called us.
 	 */
 	stop_proc(rmp, FALSE /*may_delay*/);
-
 	return TRUE;
   }
 
@@ -784,10 +834,25 @@ sig_send(
   struct sigmsg sigmsg;
   int i, r, sigflags, slot;
 
+  if (!rmp) {
+      printf("PM: sig_send called with NULL pointer\n");
+      return FALSE;
+  }
+
+  if (!is_valid_signal(signo)) {
+      printf("PM: sig_send called with invalid signal %d\n", signo);
+      return FALSE;
+  }
+
   assert(rmp->mp_flags & PROC_STOPPED);
 
   sigflags = rmp->mp_sigact[signo].sa_flags;
   slot = (int) (rmp - mproc);
+
+  if (slot < 0 || slot >= NR_PROCS) {
+      printf("PM: sig_send: invalid slot calculation %d\n", slot);
+      return FALSE;
+  }
 
   if (rmp->mp_flags & SIGSUSPENDED)
 	sigmsg.sm_mask = rmp->mp_sigmask2;
@@ -821,7 +886,7 @@ sig_send(
    * killed in that case, so do not bother interrupting or resuming it.
    */
   if(r == EFAULT || r == ENOMEM) {
-	return(FALSE);
+	return FALSE;
   }
   /* Other errors are unexpected pm/kernel discrepancies. */
   if (r != OK) {
@@ -851,5 +916,13 @@ sig_send(
 	assert(rmp->mp_flags & UNPAUSED);
   }
 
-  return(TRUE);
+  return TRUE;
+}
+
+/*===========================================================================*
+ *				is_valid_signal				     *
+ *===========================================================================*/
+static int is_valid_signal(int signo)
+{
+  return (signo > 0 && signo < _NSIG);
 }

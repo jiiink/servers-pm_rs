@@ -18,6 +18,9 @@
 #include <minix/endpoint.h>
 #include <fcntl.h>
 #include <signal.h>		/* needed only because mproc.h needs it */
+#include <string.h>
+#include <limits.h>
+#include <errno.h>
 #include "mproc.h"
 
 #include <minix/config.h>
@@ -31,21 +34,29 @@
 /*===========================================================================*
  *				get_free_pid				     *
  *===========================================================================*/
-pid_t get_free_pid()
+pid_t get_free_pid(void)
 {
   static pid_t next_pid = INIT_PID + 1;		/* next pid to be assigned */
   register struct mproc *rmp;			/* check process table */
   int t;					/* zero if pid still free */
+  int wrap_count = 0;				/* prevent infinite loops */
 
   /* Find a free pid for the child and put it in the table. */
   do {
 	t = 0;
 	next_pid = (next_pid < NR_PIDS ? next_pid + 1 : INIT_PID + 1);
-	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++)
+	
+	/* Prevent infinite loop in case all PIDs are used */
+	if (++wrap_count > NR_PIDS) {
+		return -1;  /* No free PID available */
+	}
+	
+	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
 		if (rmp->mp_pid == next_pid || rmp->mp_procgrp == next_pid) {
 			t = 1;
 			break;
 		}
+	}
   } while (t);					/* 't' = 0 means pid free */
   return(next_pid);
 }
@@ -58,6 +69,10 @@ find_param(const char *name)
 {
   register const char *namep;
   register char *envp;
+
+  if (!name || !monitor_params) {
+      return NULL;
+  }
 
   for (envp = (char *) monitor_params; *envp != 0;) {
 	for (namep = name; *namep != 0 && *namep == *envp; namep++, envp++)
@@ -73,14 +88,18 @@ find_param(const char *name)
 /*===========================================================================*
  *				find_proc  				     *
  *===========================================================================*/
-struct mproc *find_proc(lpid)
-pid_t lpid;
+struct mproc *find_proc(pid_t lpid)
 {
   register struct mproc *rmp;
 
-  for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++)
+  if (lpid <= 0) {
+      return NULL;
+  }
+
+  for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
 	if ((rmp->mp_flags & IN_USE) && rmp->mp_pid == lpid)
 		return(rmp);
+  }
 
   return(NULL);
 }
@@ -90,7 +109,8 @@ pid_t lpid;
  *===========================================================================*/
 int nice_to_priority(int nice, unsigned* new_q)
 {
-	if (nice < PRIO_MIN || nice > PRIO_MAX) return(EINVAL);
+	if (nice < PRIO_MIN || nice > PRIO_MAX) return EINVAL;
+	if (!new_q) return EINVAL;
 
 	*new_q = MAX_USER_Q + (nice-PRIO_MIN) * (MIN_USER_Q-MAX_USER_Q+1) /
 	    (PRIO_MAX-PRIO_MIN+1);
@@ -99,7 +119,7 @@ int nice_to_priority(int nice, unsigned* new_q)
 	if ((signed) *new_q < MAX_USER_Q) *new_q = MAX_USER_Q;
 	if (*new_q > MIN_USER_Q) *new_q = MIN_USER_Q;
 
-	return (OK);
+	return OK;
 }
 
 /*===========================================================================*
@@ -107,6 +127,10 @@ int nice_to_priority(int nice, unsigned* new_q)
  *===========================================================================*/
 int pm_isokendpt(int endpoint, int *proc)
 {
+	if (!proc) {
+		return EINVAL;
+	}
+
 	*proc = _ENDPOINT_P(endpoint);
 	if (*proc < 0 || *proc >= NR_PROCS)
 		return EINVAL;
@@ -120,20 +144,25 @@ int pm_isokendpt(int endpoint, int *proc)
 /*===========================================================================*
  *				tell_vfs			 	     *
  *===========================================================================*/
-void tell_vfs(rmp, m_ptr)
-struct mproc *rmp;
-message *m_ptr;
+void tell_vfs(struct mproc *rmp, message *m_ptr)
 {
 /* Send a request to VFS, without blocking.
  */
   int r;
 
-  if (rmp->mp_flags & (VFS_CALL | EVENT_CALL))
+  if (!rmp || !m_ptr) {
+      printf("PM: tell_vfs called with NULL pointer\n");
+      return;
+  }
+
+  if (rmp->mp_flags & (VFS_CALL | EVENT_CALL)) {
 	panic("tell_vfs: not idle: %d", m_ptr->m_type);
+  }
 
   r = asynsend3(VFS_PROC_NR, m_ptr, AMF_NOREPLY);
-  if (r != OK)
+  if (r != OK) {
   	panic("unable to send to VFS: %d", r);
+  }
 
   rmp->mp_flags |= VFS_CALL;
 }
@@ -146,6 +175,15 @@ set_rusage_times(struct rusage * r_usage, clock_t user_time, clock_t sys_time)
 {
 	u64_t usec;
 
+	if (!r_usage) {
+		printf("PM: set_rusage_times called with NULL pointer\n");
+		return;
+	}
+
+	/* Prevent potential overflow */
+	if (user_time < 0) user_time = 0;
+	if (sys_time < 0) sys_time = 0;
+	
 	usec = user_time * 1000000 / sys_hz();
 	r_usage->ru_utime.tv_sec = usec / 1000000;
 	r_usage->ru_utime.tv_usec = usec % 1000000;

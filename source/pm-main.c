@@ -25,6 +25,7 @@
 #include <sys/wait.h>
 #include <machine/archtypes.h>
 #include <assert.h>
+#include <string.h>
 #include "mproc.h"
 
 #include "kernel/const.h"
@@ -45,8 +46,7 @@ static int sef_cb_init_fresh(int type, sef_init_info_t *info);
 /*===========================================================================*
  *				main					     *
  *===========================================================================*/
-int
-main(void)
+int main(void)
 {
 /* Main routine of the process manager. */
   unsigned int call_index;
@@ -111,8 +111,7 @@ main(void)
 /*===========================================================================*
  *			       sef_local_startup			     *
  *===========================================================================*/
-static void
-sef_local_startup(void)
+static void sef_local_startup(void)
 {
   /* Register init callbacks. */
   sef_setcb_init_fresh(sef_cb_init_fresh);
@@ -181,7 +180,10 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
 
 		/* Set process details found in the image table. */
 		rmp = &mproc[ip->proc_nr];
-  		strlcpy(rmp->mp_name, ip->proc_name, PROC_NAME_LEN);
+  		if (strlcpy(rmp->mp_name, ip->proc_name, PROC_NAME_LEN) >= PROC_NAME_LEN) {
+			/* Truncated process name */
+			rmp->mp_name[PROC_NAME_LEN-1] = '\0';
+		}
   		(void) sigemptyset(&rmp->mp_ignore);
   		(void) sigemptyset(&rmp->mp_sigmask);
   		(void) sigemptyset(&rmp->mp_catch);
@@ -246,11 +248,7 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
 /*===========================================================================*
  *				reply					     *
  *===========================================================================*/
-void
-reply(
-	int proc_nr,			/* process to reply to */
-	int result			/* result of call (usually OK or error #) */
-)
+void reply(int proc_nr, int result)
 {
 /* Send a reply to a user process.  System calls may occasionally fill in other
  * fields, this is only for the main return value and for sending the reply.
@@ -272,10 +270,7 @@ reply(
 /*===========================================================================*
  *				get_nice_value				     *
  *===========================================================================*/
-static int
-get_nice_value(
-	int queue				/* store mem chunks here */
-)
+static int get_nice_value(int queue)
 {
 /* Processes in the boot image have a priority assigned. The PM doesn't know
  * about priorities, but uses 'nice' values instead. The priority is between
@@ -291,8 +286,7 @@ get_nice_value(
 /*===========================================================================*
  *				handle_vfs_reply       			     *
  *===========================================================================*/
-static void
-handle_vfs_reply(void)
+static void handle_vfs_reply(void)
 {
   struct mproc *rmp;
   endpoint_t proc_e;

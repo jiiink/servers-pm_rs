@@ -25,6 +25,7 @@
 #include <machine/archtypes.h>
 #include <lib.h>
 #include <assert.h>
+#include <string.h>
 #include "mproc.h"
 #include "kernel/proc.h"
 
@@ -68,8 +69,7 @@ unsigned long calls_stats[NR_PM_CALLS];
 /*===========================================================================*
  *				do_sysuname				     *
  *===========================================================================*/
-int
-do_sysuname(void)
+int do_sysuname(void)
 {
 /* Set or get uname strings. */
   int r;
@@ -96,16 +96,14 @@ do_sysuname(void)
 	return(EINVAL);
   }
   /* Return the number of bytes moved. */
-  return(n);
+  return((int)n);
 }
 /* END OF COMPATIBILITY BLOCK */
-
 
 /*===========================================================================*
  *				do_getsysinfo			       	     *
  *===========================================================================*/
-int
-do_getsysinfo(void)
+int do_getsysinfo(void)
 {
   vir_bytes src_addr, dst_addr;
   size_t len;
@@ -195,8 +193,7 @@ int do_getepinfo(void)
 /*===========================================================================*
  *				do_reboot				     *
  *===========================================================================*/
-int
-do_reboot(void)
+int do_reboot(void)
 {
   message m;
 
@@ -235,8 +232,7 @@ do_reboot(void)
 /*===========================================================================*
  *				do_getsetpriority			     *
  *===========================================================================*/
-int
-do_getsetpriority(void)
+int do_getsetpriority(void)
 {
 	int r, arg_which, arg_who, arg_pri;
 	struct mproc *rmp;
@@ -381,7 +377,9 @@ int do_svrctl(void)
       	return E2BIG;
 
       /* Value found, make the actual copy (as far as possible). */
-      copy_len = MIN(val_len, sysgetenv.vallen);
+      copy_len = val_len;
+      if (copy_len > sysgetenv.vallen)
+          copy_len = sysgetenv.vallen;
       if ((s=sys_datacopy(SELF, (vir_bytes) val_start,
               who_e, (vir_bytes) sysgetenv.val, copy_len)) != OK)
           return(s);
@@ -397,8 +395,7 @@ int do_svrctl(void)
 /*===========================================================================*
  *				do_getrusage				     *
  *===========================================================================*/
-int
-do_getrusage(void)
+int do_getrusage(void)
 {
 	clock_t user_time, sys_time;
 	struct rusage r_usage;
@@ -409,39 +406,4 @@ do_getrusage(void)
 		return EINVAL;
 
 	/*
-	 * TODO: first relay the call to VFS.  As is, VFS does not have any
-	 * fields it can fill with meaningful values, but this may change in
-	 * the future.  In that case, PM would first have to use the tell_vfs()
-	 * system to get those values from VFS, and do the rest here upon
-	 * getting the response.
-	 */
-
-	memset(&r_usage, 0, sizeof(r_usage));
-
-	children = (m_in.m_lc_pm_rusage.who == RUSAGE_CHILDREN);
-
-	/*
-	 * Get system times.  For RUSAGE_SELF, get the times for the calling
-	 * process from the kernel.  For RUSAGE_CHILDREN, we already have the
-	 * values we should return right here.
-	 */
-	if (!children) {
-		if ((r = sys_times(who_e, &user_time, &sys_time, NULL,
-		    NULL)) != OK)
-			return r;
-	} else {
-		user_time = mp->mp_child_utime;
-		sys_time = mp->mp_child_stime;
-	}
-
-	/* In both cases, convert from clock ticks to microseconds. */
-	set_rusage_times(&r_usage, user_time, sys_time);
-
-	/* Get additional fields from VM. */
-	if ((r = vm_getrusage(who_e, &r_usage, children)) != OK)
-		return r;
-
-	/* Finally copy the structure to the caller. */
-	return sys_datacopy(SELF, (vir_bytes)&r_usage, who_e,
-	    m_in.m_lc_pm_rusage.addr, (vir_bytes)sizeof(r_usage));
-}
+	 * TODO: first relay the call to VFS.  As is,

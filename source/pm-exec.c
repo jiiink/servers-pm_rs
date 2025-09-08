@@ -34,8 +34,7 @@
 /*===========================================================================*
  *				do_exec					     *
  *===========================================================================*/
-int
-do_exec(void)
+int do_exec(void)
 {
 	message m;
 
@@ -54,7 +53,6 @@ do_exec(void)
 	/* Do not reply */
 	return SUSPEND;
 }
-
 
 /*===========================================================================*
  *				do_newexec				     *
@@ -109,8 +107,10 @@ int do_newexec(void)
 	}
 
 	/* System will save command line for debugging, ps(1) output, etc. */
-	strncpy(rmp->mp_name, args.progname, PROC_NAME_LEN-1);
-	rmp->mp_name[PROC_NAME_LEN-1] = '\0';
+	if (strlcpy(rmp->mp_name, args.progname, PROC_NAME_LEN) >= PROC_NAME_LEN) {
+		/* Program name was truncated */
+		rmp->mp_name[PROC_NAME_LEN-1] = '\0';
+	}
 
 	/* Save offset to initial argc (for procfs) */
 	rmp->mp_frame_addr = (vir_bytes) args.stack_high - args.frame_len;
@@ -158,6 +158,8 @@ void exec_restart(struct mproc *rmp, int result, vir_bytes pc, vir_bytes sp,
 {
 	int r, sn;
 
+	if (rmp == NULL) return;
+
 	if (result != OK)
 	{
 		if (rmp->mp_flags & PARTIAL_EXEC)
@@ -197,4 +199,3 @@ void exec_restart(struct mproc *rmp, int result, vir_bytes pc, vir_bytes sp,
 	r = sys_exec(rmp->mp_endpoint, sp, (vir_bytes)rmp->mp_name, pc, ps_str);
 	if (r != OK) panic("sys_exec failed: %d", r);
 }
-

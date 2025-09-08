@@ -4,6 +4,8 @@
  */
 
 #include "inc.h"
+#include <errno.h>
+#include <string.h>
 
 /* A single error entry. */
 struct errentry {
@@ -11,10 +13,13 @@ struct errentry {
     char* errstr;
 };
 
+/* Maximum error string length */
+#define MAX_ERR_STR_LEN 256
+
 /* Initialization errors. */
 static struct errentry init_errlist[] = {
   { ENOSYS,     "service does not support the requested initialization type"  },
-  { ERESTART,     "service requested an initialization reset"  }
+  { ERESTART,   "service requested an initialization reset"  }
 };
 static const int init_nerr = sizeof(init_errlist) / sizeof(init_errlist[0]);
 
@@ -34,9 +39,14 @@ static char * rs_strerror(int errnum, struct errentry *errlist, const int nerr)
 {
   int i;
 
+  if (!errlist) {
+      return "unknown error (NULL error list)";
+  }
+
   for(i=0; i < nerr; i++) {
-      if(errnum == errlist[i].errnum)
+      if(errnum == errlist[i].errnum) {
           return errlist[i].errstr;
+      }
   }
 
   return strerror(-errnum);

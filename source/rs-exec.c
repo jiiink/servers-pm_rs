@@ -3,6 +3,13 @@
 #include <sys/exec.h>
 #include <libexec.h>
 #include <machine/vmparam.h>
+#include <errno.h>
+#include <string.h>
+
+/* Buffer size limits */
+#define MAX_EXEC_SIZE	(16*1024*1024)		/* 16MB max executable size */
+#define MAX_FRAME_SIZE	(1024*1024)		/* 1MB max stack frame size */
+#define MIN_STACK_SIZE	(4*1024)		/* 4KB min stack size */
 
 static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
 	char *frame, int frame_len, vir_bytes ps_str);
@@ -31,6 +38,22 @@ int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
 
 	int r;
 
+	/* Validate input parameters */
+	if (!exec || exec_len == 0 || exec_len > MAX_EXEC_SIZE) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (!progname || strlen(progname) == 0) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (!argv) {
+		errno = EINVAL;
+		return -1;
+	}
+
 	minix_stack_params(argv[0], argv, envp, &frame_size, &overflow,
 		&argc, &envc);
 
@@ -40,8 +63,15 @@ int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
 		return -1;
 	}
 
+	/* Validate frame size */
+	if (frame_size == 0 || frame_size > MAX_FRAME_SIZE) {
+		errno = E2BIG;
+		return -1;
+	}
+
 	/* Allocate space for the stack frame. */
-	if ((frame = (char *) sbrk(frame_size)) == (char *) -1) {
+	frame = (char *) sbrk(frame_size);
+	if (frame == (char *) -1) {
 		errno = E2BIG;
 		return -1;
 	}
@@ -53,7 +83,10 @@ int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
 		vsp + ((char *)psp - frame));
 
 	/* Failure, return the memory used for the frame and exit. */
-	(void) sbrk(-frame_size);
+	if (sbrk(-frame_size) == (void *) -1) {
+		/* sbrk failed, but we continue anyway */
+		printf("RS: srv_execve: sbrk cleanup failed\n");
+	}
 
 	return r;
 }
@@ -67,10 +100,29 @@ static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
 	struct exec_info execi;
 	int i;
 
+	/* Validate input parameters */
+	if (frame_len < 0 || frame_len > MAX_FRAME_SIZE) {
+		return EINVAL;
+	}
+
+	if (!exec || exec_len == 0) {
+		return EINVAL;
+	}
+
+	if (!progname || !frame) {
+		return EINVAL;
+	}
+
 	memset(&execi, 0, sizeof(execi));
 
 	execi.stack_high = minix_get_user_sp();
 	execi.stack_size = DEFAULT_STACK_LIMIT;
+	
+	/* Validate stack configuration */
+	if (execi.stack_size < MIN_STACK_SIZE) {
+		execi.stack_size = MIN_STACK_SIZE;
+	}
+
 	execi.proc_e = proc_e;
 	execi.hdr = exec;
 	execi.filesize = execi.hdr_len = exec_len;
@@ -99,15 +151,22 @@ static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
 	}
 
 	/* Inform PM */
-        if((r = libexec_pm_newexec(execi.proc_e, &execi)) != OK)
+        if((r = libexec_pm_newexec(execi.proc_e, &execi)) != OK) {
 		return r;
+	}
+
+	/* Validate stack pointer */
+	if (execi.stack_high < frame_len) {
+		printf("RS: do_exec: stack too small for frame\n");
+		return ENOMEM;
+	}
 
 	/* Patch up stack and copy it from RS to new core image. */
 	vsp = execi.stack_high - frame_len;
 	r = sys_datacopy(SELF, (vir_bytes) frame,
 		proc_e, (vir_bytes) vsp, (phys_bytes)frame_len);
 	if (r != OK) {
-		printf("do_exec: copying out new stack failed: %d\n", r);
+		printf("RS: do_exec: copying out new stack failed: %d\n", r);
 		exec_restart(proc_e, r, execi.pc, ps_str);
 		return r;
 	}
@@ -155,11 +214,24 @@ size_t seg_bytes           /* how much is to be transferred? */
 
   int r;
 
-  if (off+seg_bytes > execi->hdr_len) return ENOEXEC;
-  if((r= sys_datacopy(SELF, ((vir_bytes)execi->hdr)+off,
-  	execi->proc_e, seg_addr, seg_bytes)) != OK) {
+  /* Validate parameters */
+  if (!execi) {
+      return EINVAL;
+  }
+
+  if (off < 0 || seg_bytes == 0) {
+      return EINVAL;
+  }
+
+  if (off + seg_bytes > execi->hdr_len) {
+      return ENOEXEC;
+  }
+
+  r = sys_datacopy(SELF, ((vir_bytes)execi->hdr)+off,
+  	execi->proc_e, seg_addr, seg_bytes);
+  if (r != OK) {
 	printf("RS: exec read_seg: copy 0x%x bytes into %i at 0x%08lx failed: %i\n",
-		(int) seg_bytes, execi->proc_e, seg_addr, r);
+		(unsigned int) seg_bytes, execi->proc_e, seg_addr, r);
   }
   return r;
 }

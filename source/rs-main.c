@@ -10,6 +10,9 @@
  */
 #include "inc.h"
 #include <fcntl.h>
+#include <string.h>
+#include <errno.h>
+#include <limits.h>
 #include "kernel/const.h"
 #include "kernel/type.h"
 #include "kernel/proc.h"
@@ -50,8 +53,9 @@ int main(void)
   /* SEF local startup. */
   sef_local_startup();
   
-  if (OK != (s=sys_getmachine(&machine)))
+  if (OK != (s=sys_getmachine(&machine))) {
 	  panic("couldn't get machine info: %d", s);
+  }
 
   /* Main loop - get work and do it, forever. */         
   while (TRUE) {              
@@ -109,8 +113,8 @@ int main(void)
 	  case RS_UNCLONE: 	result = do_unclone(&m);	break;
           case RS_EDIT: 	result = do_edit(&m); 		break;
 	  case RS_SYSCTL:	result = do_sysctl(&m);		break;
-	  case RS_FI:	result = do_fi(&m);		break;
-          case RS_GETSYSINFO:  result = do_getsysinfo(&m);     break;
+	  case RS_FI:		result = do_fi(&m);		break;
+          case RS_GETSYSINFO:   result = do_getsysinfo(&m);     break;
 	  case RS_LOOKUP:	result = do_lookup(&m);		break;
 	  /* Ready messages. */
 	  case RS_INIT: 	result = do_init_ready(&m); 	break;
@@ -119,6 +123,7 @@ int main(void)
               printf("RS: warning: got unexpected request %d from %d\n",
                   m.m_type, m.m_source);
               result = ENOSYS;
+              break;
           }
 
           /* Finally send reply message, unless disabled. */
@@ -133,7 +138,7 @@ int main(void)
 /*===========================================================================*
  *			       sef_local_startup			     *
  *===========================================================================*/
-static void sef_local_startup()
+static void sef_local_startup(void)
 {
   /* Register init callbacks. */
   sef_setcb_init_fresh(sef_cb_init_fresh);
@@ -178,8 +183,9 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
   /* See if we run in verbose mode. */
   env_parse("rs_verbose", "d", 0, &rs_verbose, 0, 1);
 
-  if ((s = sys_getinfo(GET_HZ, &system_hz, sizeof(system_hz), 0, 0)) != OK)
+  if ((s = sys_getinfo(GET_HZ, &system_hz, sizeof(system_hz), 0, 0)) != OK) {
 	  panic("Cannot get system timer frequency\n");
+  }
 
   /* Initialize the global init descriptor. */
   rinit.rproctab_gid = cpf_grant_direct(ANY, (vir_bytes) rprocpub,
@@ -238,7 +244,7 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
 
   /* Initialize the system process table in 4 steps, each of them following
    * the appearance of system services in the boot image priv table.
-   * - Step 1: set priviliges, sys properties, and dev properties (if any)
+   * - Step 1: set privileges, sys properties, and dev properties (if any)
    * for every system service.
    */
   for (i=0; boot_image_priv_table[i].endpoint != NULL_BOOT_NR; i++) {
@@ -252,14 +258,20 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
       /* Lookup the corresponding entries in other tables. */
       boot_image_info_lookup(boot_image_priv->endpoint, image,
           &ip, NULL, &boot_image_sys, &boot_image_dev);
-      rp = &rproc[boot_image_priv - boot_image_priv_table];
+      
+      if (i >= NR_SYS_PROCS) {
+          panic("boot image priv table index out of bounds: %d", i);
+      }
+      
+      rp = &rproc[i];
       rpub = rp->r_pub;
 
       /*
        * Set privileges.
        */
       /* Get label. */
-      strcpy(rpub->label, boot_image_priv->label);
+      strncpy(rpub->label, boot_image_priv->label, sizeof(rpub->label)-1);
+      rpub->label[sizeof(rpub->label)-1] = '\0';
 
       /* Force a static priv id for system services in the boot image. */
       rp->r_priv.s_id = static_priv_id(
@@ -306,11 +318,13 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
       rpub->dev_nr = boot_image_dev->dev_nr;          /* major device number */
 
       /* Build command settings. Also set the process name. */
-      strlcpy(rp->r_cmd, ip->proc_name, sizeof(rp->r_cmd));
+      strncpy(rp->r_cmd, ip->proc_name, sizeof(rp->r_cmd)-1);
+      rp->r_cmd[sizeof(rp->r_cmd)-1] = '\0';
       rp->r_script[0]= '\0';
       build_cmd_dep(rp);
 
-      strlcpy(rpub->proc_name, ip->proc_name, sizeof(rpub->proc_name));
+      strncpy(rpub->proc_name, ip->proc_name, sizeof(rpub->proc_name)-1);
+      rpub->proc_name[sizeof(rpub->proc_name)-1] = '\0';
 
       /* Initialize vm call mask bitmap. */
       calls = SRV_OR_USR(rp, SRV_VC, USR_VC) == ALL_C ? all_c : no_c;
@@ -341,7 +355,14 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
 
       /* Mark as in use and active. */
       rp->r_flags = RS_IN_USE | RS_ACTIVE;
-      rproc_ptr[_ENDPOINT_P(rpub->endpoint)]= rp;
+      
+      /* Validate endpoint bounds */
+      int endpoint_p = _ENDPOINT_P(rpub->endpoint);
+      if (endpoint_p < 0 || endpoint_p >= NR_PROCS) {
+          panic("endpoint out of bounds: %d", rpub->endpoint);
+      }
+      
+      rproc_ptr[endpoint_p] = rp;
       rpub->in_use = TRUE;
   }
 
@@ -356,7 +377,11 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
       }
 
       /* Lookup the corresponding slot in the system process table. */
-      rp = &rproc[boot_image_priv - boot_image_priv_table];
+      if (i >= NR_SYS_PROCS) {
+          continue;  /* Skip if out of bounds */
+      }
+      
+      rp = &rproc[i];
       rpub = rp->r_pub;
 
       /* RS/VM are already running as we speak. */
@@ -419,7 +444,11 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
       }
 
       /* Lookup the corresponding slot in the system process table. */
-      rp = &rproc[boot_image_priv - boot_image_priv_table];
+      if (i >= NR_SYS_PROCS) {
+          continue;  /* Skip if out of bounds */
+      }
+      
+      rp = &rproc[i];
       rpub = rp->r_pub;
 
       /* Get pid from PM. */
@@ -430,8 +459,9 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
   }
 
   /* Set alarm to periodically check service status. */
-  if (OK != (s=sys_setalarm(RS_DELTA_T, 0)))
+  if (OK != (s=sys_setalarm(RS_DELTA_T, 0))) {
       panic("couldn't set alarm: %d", s);
+  }
 
 #if USE_LIVEUPDATE
   /* Now create a new RS instance and let the current
@@ -448,8 +478,9 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
       panic("unable to fork a new RS instance: %d", pid);
   }
   replica_pid = pid ? pid : getpid();
-  if ((s = getprocnr(replica_pid, &replica_endpoint)) != 0)
+  if ((s = getprocnr(replica_pid, &replica_endpoint)) != 0) {
 	panic("unable to get replica endpoint: %d", s);
+  }
   replica_rp->r_pid = replica_pid;
   replica_rp->r_pub->endpoint = replica_endpoint;
 
@@ -490,7 +521,7 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
   }
 #endif /* USE_LIVEUPDATE */
 
-  return(OK);
+  return OK;
 }
 
 /*===========================================================================*
@@ -501,6 +532,10 @@ static int sef_cb_init_restart(int type, sef_init_info_t *info)
 /* Restart the reincarnation server. */
   int r;
   struct rproc *old_rs_rp, *new_rs_rp;
+
+  if (!info) {
+      return EINVAL;
+  }
 
   assert(info->endpoint == RS_PROC_NR);
 
@@ -537,8 +572,9 @@ static int sef_cb_init_restart(int type, sef_init_info_t *info)
   }
 
   /* Reschedule a synchronous alarm for the next period. */
-  if (OK != (r=sys_setalarm(RS_DELTA_T, 0)))
+  if (OK != (r=sys_setalarm(RS_DELTA_T, 0))) {
       panic("couldn't set alarm: %d", r);
+  }
 
   return OK;
 }
@@ -551,6 +587,10 @@ static int sef_cb_init_lu(int type, sef_init_info_t *info)
 /* Start a new version of the reincarnation server. */
   int r;
   struct rproc *old_rs_rp, *new_rs_rp;
+
+  if (!info) {
+      return EINVAL;
+  }
 
   assert(info->endpoint == RS_PROC_NR);
 
@@ -592,6 +632,10 @@ int sef_cb_init_response(message *m_ptr)
 {
   int r;
 
+  if (!m_ptr) {
+      return EINVAL;
+  }
+
   /* Return now if RS initialization failed. */
   r = m_ptr->m_rs_init.result;
   if(r != OK) {
@@ -615,6 +659,10 @@ int sef_cb_lu_response(message *m_ptr)
 {
   int r;
 
+  if (!m_ptr) {
+      return EINVAL;
+  }
+
   /* Simulate an RS-to-RS update ready message. */
   r = do_upd_ready(m_ptr);
 
@@ -634,10 +682,13 @@ static void sef_cb_signal_handler(int signo)
   switch(signo) {
       case SIGCHLD:
           do_sigchld();
-      break;
+          break;
       case SIGTERM:
           do_shutdown(NULL);
-      break;
+          break;
+      default:
+          /* Ignore unknown signals */
+          break;
   }
 }
 
@@ -650,6 +701,14 @@ static int sef_cb_signal_manager(endpoint_t target, int signo)
   int target_p;
   struct rproc *rp;
   message m;
+
+  /* Validate signal number */
+  if (signo <= 0 || signo >= _NSIG) {
+      if(rs_verbose)
+          printf("RS: ignoring invalid signal %d for process %d\n",
+              signo, target);
+      return OK;
+  }
 
   /* Lookup slot. */
   if(rs_isokendpt(target, &target_p) != OK || rproc_ptr[target_p] == NULL) {
@@ -696,6 +755,7 @@ static int sef_cb_signal_manager(endpoint_t target, int signo)
   }
 
   /* Translate every non-termination signal into a message. */
+  memset(&m, 0, sizeof(m));
   m.m_type = SIGS_SIGNAL_RECEIVED;
   m.m_pm_lsys_sigs_signal.num = signo;
   rs_asynsend(rp, &m, 1);
@@ -706,13 +766,9 @@ static int sef_cb_signal_manager(endpoint_t target, int signo)
 /*===========================================================================*
  *                         boot_image_info_lookup                            *
  *===========================================================================*/
-static void boot_image_info_lookup(endpoint, image, ip, pp, sp, dp)
-endpoint_t endpoint;
-struct boot_image *image;
-struct boot_image **ip;
-struct boot_image_priv **pp;
-struct boot_image_sys **sp;
-struct boot_image_dev **dp;
+static void boot_image_info_lookup(endpoint_t endpoint, struct boot_image *image,
+    struct boot_image **ip, struct boot_image_priv **pp,
+    struct boot_image_sys **sp, struct boot_image_dev **dp)
 {
 /* Lookup entries in boot image tables. */
   int i;
@@ -742,7 +798,7 @@ struct boot_image_dev **dp;
               break;
           }
       }
-      if(i == NULL_BOOT_NR) {
+      if(boot_image_priv_table[i].endpoint == NULL_BOOT_NR) {
           panic("boot image priv table lookup failed");
       }
   }
@@ -781,8 +837,7 @@ struct boot_image_dev **dp;
 /*===========================================================================*
  *			      catch_boot_init_ready                          *
  *===========================================================================*/
-static void catch_boot_init_ready(endpoint)
-endpoint_t endpoint;
+static void catch_boot_init_ready(endpoint_t endpoint)
 {
 /* Block and catch an init ready message from the given source. */
   int r;
@@ -799,7 +854,18 @@ endpoint_t endpoint;
       panic("unexpected reply from service: %d", m.m_source);
   }
   result = m.m_rs_init.result;
-  rp = rproc_ptr[_ENDPOINT_P(m.m_source)];
+  
+  /* Validate endpoint and get rproc */
+  int proc_nr;
+  if (rs_isokendpt(m.m_source, &proc_nr) != OK || 
+      proc_nr < 0 || proc_nr >= NR_PROCS) {
+      panic("invalid endpoint in init ready: %d", m.m_source);
+  }
+  
+  rp = rproc_ptr[proc_nr];
+  if (!rp) {
+      panic("no rproc for endpoint: %d", m.m_source);
+  }
 
   /* Check result. */
   if(result != OK) {
@@ -823,12 +889,15 @@ endpoint_t endpoint;
 /*===========================================================================*
  *				get_work                                     *
  *===========================================================================*/
-static void get_work(m_ptr, status_ptr)
-message *m_ptr;				/* pointer to message */
-int *status_ptr;			/* pointer to status */
+static void get_work(message *m_ptr, int *status_ptr)
 {
     int r;
-    if (OK != (r=sef_receive_status(ANY, m_ptr, status_ptr)))
+    
+    if (!m_ptr || !status_ptr) {
+        panic("get_work: NULL pointer argument");
+    }
+    
+    if (OK != (r=sef_receive_status(ANY, m_ptr, status_ptr))) {
         panic("sef_receive_status failed: %d", r);
+    }
 }
-
