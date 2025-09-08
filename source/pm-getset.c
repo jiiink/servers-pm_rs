@@ -22,49 +22,45 @@ do_get(void)
  * PM_ISSETUGID.
  */
   register struct mproc *rmp = mp;
-  int r = OK;
-  int ngroups_requested;
+  int r;
+  int ngroups;
 
   switch(call_nr) {
 	case PM_GETGROUPS:
-		ngroups_requested = m_in.m_lc_pm_groups.num;
-		if (ngroups_requested > NGROUPS_MAX || ngroups_requested < 0)
+		ngroups = m_in.m_lc_pm_groups.num;
+		if (ngroups > NGROUPS_MAX || ngroups < 0)
 			return(EINVAL);
 
-		if (ngroups_requested == 0) {
+		if (ngroups == 0) {
 			r = rmp->mp_ngroups;
 			break;
 		}
 
-		if (ngroups_requested < rmp->mp_ngroups) {
-			/* Asking for less groups than available. POSIX specifies this
-			 * is an error. */
+		if (ngroups < rmp->mp_ngroups)
+			/* Asking for less groups than available */
 			return(EINVAL);
-		}
 
-		/* Copy supplemental groups to user space. */
 		r = sys_datacopy(SELF, (vir_bytes) rmp->mp_sgroups, who_e,
-			(vir_bytes)m_in.m_lc_pm_groups.ptr,
-			(phys_bytes)ngroups_requested * sizeof(gid_t));
+			m_in.m_lc_pm_groups.ptr, ngroups * sizeof(gid_t));
+
 		if (r != OK)
 			return(r);
 
-		r = rmp->mp_ngroups; /* Return number of groups actually copied */
+		r = rmp->mp_ngroups;
 		break;
-
 	case PM_GETUID:
-		mp->mp_reply.m_pm_lc_getuid.euid = rmp->mp_effuid;
 		r = rmp->mp_realuid;
+		rmp->mp_reply.m_pm_lc_getuid.euid = rmp->mp_effuid;
 		break;
 
 	case PM_GETGID:
-		mp->mp_reply.m_pm_lc_getgid.egid = rmp->mp_effgid;
 		r = rmp->mp_realgid;
+		rmp->mp_reply.m_pm_lc_getgid.egid = rmp->mp_effgid;
 		break;
 
 	case PM_GETPID:
-		mp->mp_reply.m_pm_lc_getpid.parent_pid = mproc[rmp->mp_parent].mp_pid;
-		r = rmp->mp_pid;
+		r = mproc[who_p].mp_pid;
+		rmp->mp_reply.m_pm_lc_getpid.parent_pid = mproc[rmp->mp_parent].mp_pid;
 		break;
 
 	case PM_GETPGRP:
@@ -73,12 +69,12 @@ do_get(void)
 
 	case PM_GETSID:
 	{
-		struct mproc *target_mp;
-		pid_t p_id = m_in.m_lc_pm_getsid.pid;
-		target_mp = p_id ? find_proc(p_id) : &mproc[who_p];
-		r = ESRCH; /* Default to error if target not found */
-		if(target_mp)
-			r = target_mp->mp_procgrp;
+		struct mproc *target;
+		pid_t p = m_in.m_lc_pm_getsid.pid;
+		target = p ? find_proc(p) : &mproc[who_p];
+		r = ESRCH;
+		if(target)
+			r = target->mp_procgrp;
 		break;
 	}
 	case PM_ISSETUGID:
@@ -104,24 +100,23 @@ do_set(void)
  */
   register struct mproc *rmp = mp;
   message m;
-  int r = OK;
-  int ngroups_val;
-  uid_t uid_val;
-  gid_t gid_val;
+  int r, i;
+  int ngroups;
+  uid_t uid;
+  gid_t gid;
 
   memset(&m, 0, sizeof(m));
 
   switch(call_nr) {
 	case PM_SETUID:
-		uid_val = (uid_t)m_in.m_lc_pm_setuid.uid;
-		/* NetBSD specific semantics: setuid(geteuid()) may fail.
-		 * Allowed if real UID matches new UID, or if effective UID is SUPER_USER. */
-		if (rmp->mp_realuid != uid_val && rmp->mp_effuid != SUPER_USER)
+		uid = m_in.m_lc_pm_setuid.uid;
+		/* NetBSD specific semantics: setuid(geteuid()) may fail. */
+		if (rmp->mp_realuid != uid && rmp->mp_effuid != SUPER_USER)
 			return(EPERM);
 		/* BSD semantics: always update all three fields. */
-		rmp->mp_realuid = uid_val;
-		rmp->mp_effuid = uid_val;
-		rmp->mp_svuid = uid_val;
+		rmp->mp_realuid = uid;
+		rmp->mp_effuid = uid;
+		rmp->mp_svuid = uid;
 
 		m.m_type = VFS_PM_SETUID;
 		m.VFS_PM_ENDPT = rmp->mp_endpoint;
@@ -131,13 +126,12 @@ do_set(void)
 		break;
 
 	case PM_SETEUID:
-		uid_val = (uid_t)m_in.m_lc_pm_setuid.uid;
-		/* BSD semantics: seteuid(geteuid()) may fail.
-		 * Allowed if real UID, saved UID, or effective UID is SUPER_USER matches new UID. */
-		if (rmp->mp_realuid != uid_val && rmp->mp_svuid != uid_val &&
+		uid = m_in.m_lc_pm_setuid.uid;
+		/* BSD semantics: seteuid(geteuid()) may fail. */
+		if (rmp->mp_realuid != uid && rmp->mp_svuid != uid &&
 		    rmp->mp_effuid != SUPER_USER)
 			return(EPERM);
-		rmp->mp_effuid = uid_val;
+		rmp->mp_effuid = uid;
 
 		m.m_type = VFS_PM_SETUID;
 		m.VFS_PM_ENDPT = rmp->mp_endpoint;
@@ -147,13 +141,12 @@ do_set(void)
 		break;
 
 	case PM_SETGID:
-		gid_val = (gid_t)m_in.m_lc_pm_setgid.gid;
-		/* Allowed if real GID matches new GID, or if effective UID is SUPER_USER. */
-		if (rmp->mp_realgid != gid_val && rmp->mp_effuid != SUPER_USER)
+		gid = m_in.m_lc_pm_setgid.gid;
+		if (rmp->mp_realgid != gid && rmp->mp_effuid != SUPER_USER)
 			return(EPERM);
-		rmp->mp_realgid = gid_val;
-		rmp->mp_effgid = gid_val;
-		rmp->mp_svgid = gid_val;
+		rmp->mp_realgid = gid;
+		rmp->mp_effgid = gid;
+		rmp->mp_svgid = gid;
 
 		m.m_type = VFS_PM_SETGID;
 		m.VFS_PM_ENDPT = rmp->mp_endpoint;
@@ -163,12 +156,11 @@ do_set(void)
 		break;
 
 	case PM_SETEGID:
-		gid_val = (gid_t)m_in.m_lc_pm_setgid.gid;
-		/* Allowed if real GID, saved GID, or effective UID is SUPER_USER matches new GID. */
-		if (rmp->mp_realgid != gid_val && rmp->mp_svgid != gid_val &&
+		gid = m_in.m_lc_pm_setgid.gid;
+		if (rmp->mp_realgid != gid && rmp->mp_svgid != gid &&
 		    rmp->mp_effuid != SUPER_USER)
 			return(EPERM);
-		rmp->mp_effgid = gid_val;
+		rmp->mp_effgid = gid;
 
 		m.m_type = VFS_PM_SETGID;
 		m.VFS_PM_ENDPT = rmp->mp_endpoint;
@@ -181,41 +173,36 @@ do_set(void)
 		if (rmp->mp_effuid != SUPER_USER)
 			return(EPERM);
 
-		ngroups_val = m_in.m_lc_pm_groups.num;
+		ngroups = m_in.m_lc_pm_groups.num;
 
-		if (ngroups_val > NGROUPS_MAX || ngroups_val < 0)
+		if (ngroups > NGROUPS_MAX || ngroups < 0)
 			return(EINVAL);
 
-		if (ngroups_val > 0 && m_in.m_lc_pm_groups.ptr == 0)
+		if (ngroups > 0 && m_in.m_lc_pm_groups.ptr == 0)
 			return(EFAULT);
 
-		/* Copy supplemental groups from user space to PM. */
-		r = sys_datacopy(who_e, (vir_bytes)m_in.m_lc_pm_groups.ptr, SELF,
+		r = sys_datacopy(who_e, m_in.m_lc_pm_groups.ptr, SELF,
 			     (vir_bytes) rmp->mp_sgroups,
-			     (phys_bytes)ngroups_val * sizeof(gid_t));
+			     ngroups * sizeof(gid_t));
 		if (r != OK)
 			return(r);
 
-		for (int i = 0; i < ngroups_val; i++) {
+		for (i = 0; i < ngroups; i++) {
 			if (rmp->mp_sgroups[i] > GID_MAX)
 				return(EINVAL);
 		}
-		/* Clear any unused group slots. */
-		for (int i = ngroups_val; i < NGROUPS_MAX; i++) {
+		for (i = ngroups; i < NGROUPS_MAX; i++) {
 			rmp->mp_sgroups[i] = 0;
 		}
-		rmp->mp_ngroups = ngroups_val;
+		rmp->mp_ngroups = ngroups;
 
 		m.m_type = VFS_PM_SETGROUPS;
 		m.VFS_PM_ENDPT = rmp->mp_endpoint;
 		m.VFS_PM_GROUP_NO = rmp->mp_ngroups;
-		m.VFS_PM_GROUP_ADDR = (char *) rmp->mp_sgroups; /* Pointer in PM's address space */
+		m.VFS_PM_GROUP_ADDR = (char *) rmp->mp_sgroups;
 
 		break;
-
 	case PM_SETSID:
-		/* A process cannot become a session leader if it's already
-		 * a process group leader (e.g., has a child in its group). */
 		if (rmp->mp_procgrp == rmp->mp_pid) return(EPERM);
 		rmp->mp_procgrp = rmp->mp_pid;
 
@@ -228,9 +215,9 @@ do_set(void)
 		return(EINVAL);
   }
 
-  /* Send the request to VFS. */
+  /* Send the request to VFS */
   tell_vfs(rmp, &m);
 
-  /* Do not reply until VFS has processed the request. */
+  /* Do not reply until VFS has processed the request */
   return(SUSPEND);
 }

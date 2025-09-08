@@ -11,7 +11,7 @@
 #include <sys/cdefs.h>
 
 /* Needs to be included here, for 'ps' etc */
-#include "const.h" /* For PROC_NAME_LEN, NGROUPS_MAX, etc. */
+#include "const.h"
 
 /*
  * The per-process sigaction structures are stored outside of the mproc table,
@@ -30,7 +30,7 @@ EXTERN struct mproc {
   pid_t mp_procgrp;		/* pid of process group (used for signals) */
   pid_t mp_wpid;		/* pid this process is waiting for */
   vir_bytes mp_waddr;		/* struct rusage address while waiting */
-  int mp_parent;		/* index of parent process (mproc table slot) */
+  int mp_parent;		/* index of parent process */
   int mp_tracer;		/* index of tracer process, or NO_TRACER */
 
   /* Child user and system times. Accounting done on child exit. */
@@ -53,7 +53,7 @@ EXTERN struct mproc {
   sigset_t mp_ignore;		/* 1 means ignore the signal, 0 means don't */
   sigset_t mp_catch;		/* 1 means catch the signal, 0 means don't */
   sigset_t mp_sigmask;		/* signals to be blocked */
-  sigset_t mp_sigmask2;		/* saved copy of mp_sigmask (for sigsuspend) */
+  sigset_t mp_sigmask2;		/* saved copy of mp_sigmask */
   sigset_t mp_sigpending;	/* pending signals to be handled */
   sigset_t mp_ksigpending;	/* bitmap for pending signals from the kernel */
   sigset_t mp_sigtrace;		/* signals to hand to tracer first */
@@ -82,25 +82,25 @@ EXTERN struct mproc {
   int mp_magic;			/* sanity check, MP_MAGIC */
 } mproc[NR_PROCS];
 
-/* Flag values (bitmasks) */
-#define IN_USE		    0x00001	/* set when 'mproc' slot in use */
-#define WAITING		    0x00002	/* set by WAIT4 system call */
-#define ZOMBIE		    0x00004	/* waiting for parent to issue WAIT4 call */
-#define PROC_STOPPED	    0x00008	/* process is stopped in the kernel */
-#define ALARM_ON	    0x00010	/* set when SIGALRM timer started */
-#define EXITING		    0x00020	/* set by EXIT, process is now exiting */
-#define TOLD_PARENT	    0x00040	/* parent wait() completed, ZOMBIE off */
-#define TRACE_STOPPED	    0x00080	/* set if process stopped for tracing */
-#define SIGSUSPENDED	    0x00100	/* set by SIGSUSPEND system call */
-#define VFS_CALL       	    0x00400	/* set if waiting for VFS (normal calls) */
-#define NEW_PARENT	    0x00800	/* process's parent changed during VFS call */
-#define UNPAUSED	    0x01000	/* VFS has replied to unpause request */
-#define PRIV_PROC	    0x02000	/* system process, special privileges */
-#define PARTIAL_EXEC	    0x04000	/* process got a new map but no content */
-#define TRACE_EXIT	    0x08000	/* tracer is forcing this process to exit */
-#define TRACE_ZOMBIE	    0x10000	/* waiting for tracer to issue WAIT4 call */
-#define DELAY_CALL	    0x20000	/* waiting for call before sending signal */
-#define TAINTED		    0x40000     /* process is 'tainted' (e.g., setuid/setgid or ruid!=euid) */
-#define EVENT_CALL	    0x80000	/* waiting for process event subscriber */
+/* Flag values */
+#define IN_USE		0x00001	/* set when 'mproc' slot in use */
+#define WAITING		0x00002	/* set by WAIT4 system call */
+#define ZOMBIE		0x00004	/* waiting for parent to issue WAIT4 call */
+#define PROC_STOPPED	0x00008	/* process is stopped in the kernel */
+#define ALARM_ON	0x00010	/* set when SIGALRM timer started */
+#define EXITING		0x00020	/* set by EXIT, process is now exiting */
+#define TOLD_PARENT	0x00040	/* parent wait() completed, ZOMBIE off */
+#define TRACE_STOPPED	0x00080	/* set if process stopped for tracing */
+#define SIGSUSPENDED	0x00100	/* set by SIGSUSPEND system call */
+#define VFS_CALL       	0x00400	/* set if waiting for VFS (normal calls) */
+#define NEW_PARENT	0x00800	/* process's parent changed during VFS call */
+#define UNPAUSED	0x01000	/* VFS has replied to unpause request */
+#define PRIV_PROC	0x02000	/* system process, special privileges */
+#define PARTIAL_EXEC	0x04000	/* process got a new map but no content */
+#define TRACE_EXIT	0x08000	/* tracer is forcing this process to exit */
+#define TRACE_ZOMBIE	0x10000	/* waiting for tracer to issue WAIT4 call */
+#define DELAY_CALL	0x20000	/* waiting for call before sending signal */
+#define TAINTED		0x40000 /* process is 'tainted' */
+#define EVENT_CALL	0x80000	/* waiting for process event subscriber */
 
-#define MP_MAGIC	0xC0FFEE0 /* Magic number for mproc entry validation */
+#define MP_MAGIC	0xC0FFEE0

@@ -6,31 +6,31 @@
 #include "inc.h"
 
 /* A single error entry. */
-typedef struct {
+struct errentry {
     int errnum;
-    const char* errstr; /* Made const char* for reliability */
-} ErrorEntry;
+    char* errstr;
+};
 
 /* Initialization errors. */
-static ErrorEntry init_errlist[] = {
+static struct errentry init_errlist[] = {
   { ENOSYS,     "service does not support the requested initialization type"  },
   { ERESTART,     "service requested an initialization reset"  }
 };
-static const int init_nerr = __arraycount(init_errlist);
+static const int init_nerr = sizeof(init_errlist) / sizeof(init_errlist[0]);
 
 /* Live update errors. */
-static ErrorEntry lu_errlist[] = {
+static struct errentry lu_errlist[] = {
   { ENOSYS,     "service does not support live update"                        },
   { EINVAL,     "service does not support the required state"                 },
   { EBUSY,      "service is not able to prepare for the update now"           },
   { EGENERIC,   "generic error occurred while preparing for the update"       }
 };
-static const int lu_nerr = __arraycount(lu_errlist);
+static const int lu_nerr = sizeof(lu_errlist) / sizeof(lu_errlist[0]);
 
 /*===========================================================================*
  *				  rs_strerror				     *
  *===========================================================================*/
-static const char * rs_strerror(int errnum, const ErrorEntry *errlist, int nerr)
+static char * rs_strerror(int errnum, struct errentry *errlist, const int nerr)
 {
   int i;
 
@@ -39,14 +39,13 @@ static const char * rs_strerror(int errnum, const ErrorEntry *errlist, int nerr)
           return errlist[i].errstr;
   }
 
-  /* If not found in custom list, return system error string. */
   return strerror(-errnum);
 }
 
 /*===========================================================================*
  *				  init_strerror				     *
  *===========================================================================*/
-const char * init_strerror(int errnum)
+char * init_strerror(int errnum)
 {
   return rs_strerror(errnum, init_errlist, init_nerr);
 }
@@ -54,7 +53,7 @@ const char * init_strerror(int errnum)
 /*===========================================================================*
  *				   lu_strerror				     *
  *===========================================================================*/
-const char * lu_strerror(int errnum)
+char * lu_strerror(int errnum)
 {
   return rs_strerror(errnum, lu_errlist, lu_nerr);
 }

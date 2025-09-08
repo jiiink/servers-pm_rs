@@ -39,7 +39,7 @@ struct utsname uts_val = {
 #elif defined(__arm__)
   "evbarm",		/* machine (cpu) type */
 #else
-#error "Unknown architecture for uname -m"
+#error			/* oops, no 'uname -mk' */
 #endif
 };
 
@@ -48,17 +48,15 @@ static char *uts_tbl[] = {
   "i386",		/* architecture */
 #elif defined(__arm__)
   "evbarm",		/* architecture */
-#else
-#error "Unknown architecture for uname -m"
 #endif
-  NULL,			/* No kernel architecture (or same as machine) */
+  NULL,			/* No kernel architecture */
   uts_val.machine,
   NULL,			/* No hostname */
   uts_val.nodename,
   uts_val.release,
   uts_val.version,
   uts_val.sysname,
-  NULL,			/* No bus */
+  NULL,			/* No bus */			/* No bus */
 };
 /* END OF COMPATIBILITY BLOCK */
 
@@ -75,24 +73,22 @@ do_sysuname(void)
 {
 /* Set or get uname strings. */
   int r;
-  size_t n_copied;
-  char *string_ptr;
-  unsigned int field_index = m_in.m_lc_pm_sysuname.field;
+  size_t n;
+  char *string;
 
-  if (field_index >= __arraycount(uts_tbl)) return(EINVAL);
+  if (m_in.m_lc_pm_sysuname.field >= __arraycount(uts_tbl)) return(EINVAL);
 
-  string_ptr = uts_tbl[field_index];
-  if (string_ptr == NULL)
+  string = uts_tbl[m_in.m_lc_pm_sysuname.field];
+  if (string == NULL)
 	return EINVAL;	/* Unsupported field */
 
   switch (m_in.m_lc_pm_sysuname.req) {
-  case 0: /* Get uname string */
-	n_copied = strlen(string_ptr) + 1;
-	if (n_copied > (size_t)m_in.m_lc_pm_sysuname.len) {
-        n_copied = (size_t)m_in.m_lc_pm_sysuname.len;
-    }
-	r = sys_datacopy(SELF, (vir_bytes)string_ptr, mp->mp_endpoint,
-		(vir_bytes)m_in.m_lc_pm_sysuname.value, (phys_bytes)n_copied);
+  case 0:
+	/* Copy an uname string to the user. */
+	n = strlen(string) + 1;
+	if (n > m_in.m_lc_pm_sysuname.len) n = m_in.m_lc_pm_sysuname.len;
+	r = sys_datacopy(SELF, (vir_bytes)string, mp->mp_endpoint,
+		m_in.m_lc_pm_sysuname.value, (phys_bytes)n);
 	if (r < 0) return(r);
 	break;
 
@@ -100,7 +96,7 @@ do_sysuname(void)
 	return(EINVAL);
   }
   /* Return the number of bytes moved. */
-  return(n_copied);
+  return(n);
 }
 /* END OF COMPATIBILITY BLOCK */
 
@@ -113,14 +109,13 @@ do_getsysinfo(void)
 {
   vir_bytes src_addr, dst_addr;
   size_t len;
-  int r;
 
   /* This call leaks important information. In the future, requests from
    * non-system processes should be denied.
    */
-  if (mp->mp_effuid != SUPER_USER)
+  if (mp->mp_effuid != 0)
   {
-	printf("PM: unauthorized call of do_getsysinfo by proc %d (%s)\n",
+	printf("PM: unauthorized call of do_getsysinfo by proc %d '%s'\n",
 		mp->mp_endpoint, mp->mp_name);
 	sys_diagctl_stacktrace(mp->mp_endpoint);
 	return EPERM;
@@ -141,13 +136,11 @@ do_getsysinfo(void)
   	return(EINVAL);
   }
 
-  if (len != (size_t)m_in.m_lsys_getsysinfo.size) {
+  if (len != m_in.m_lsys_getsysinfo.size)
 	return(EINVAL);
-  }
 
-  dst_addr = (vir_bytes)m_in.m_lsys_getsysinfo.where;
-  r = sys_datacopy(SELF, src_addr, who_e, dst_addr, len);
-  return r;
+  dst_addr = m_in.m_lsys_getsysinfo.where;
+  return sys_datacopy(SELF, src_addr, who_e, dst_addr, len);
 }
 
 /*===========================================================================*
@@ -155,19 +148,18 @@ do_getsysinfo(void)
  *===========================================================================*/
 int do_getprocnr(void)
 {
-  register struct mproc *rmp_target;
+  register struct mproc *rmp;
 
-  /* This check should be replaced by per-call ACL checks.
-   * Only RS is allowed to query process numbers. */
+  /* This check should be replaced by per-call ACL checks. */
   if (who_e != RS_PROC_NR) {
 	printf("PM: unauthorized call of do_getprocnr by %d\n", who_e);
 	return EPERM;
   }
 
-  if ((rmp_target = find_proc(m_in.m_lsys_pm_getprocnr.pid)) == NULL)
+  if ((rmp = find_proc(m_in.m_lsys_pm_getprocnr.pid)) == NULL)
 	return(ESRCH);
 
-  mp->mp_reply.m_pm_lsys_getprocnr.endpt = rmp_target->mp_endpoint;
+  mp->mp_reply.m_pm_lsys_getprocnr.endpt = rmp->mp_endpoint;
   return(OK);
 }
 
@@ -176,33 +168,28 @@ int do_getprocnr(void)
  *===========================================================================*/
 int do_getepinfo(void)
 {
-  struct mproc *rmp_target;
-  endpoint_t ep_val;
-  int r, slot_nr, ngroups_to_copy;
+  struct mproc *rmp;
+  endpoint_t ep;
+  int r, slot, ngroups;
 
-  ep_val = m_in.m_lsys_pm_getepinfo.endpt;
-  if (pm_isokendpt(ep_val, &slot_nr) != OK)
+  ep = m_in.m_lsys_pm_getepinfo.endpt;
+  if (pm_isokendpt(ep, &slot) != OK)
 	return(ESRCH);
-  rmp_target = &mproc[slot_nr];
+  rmp = &mproc[slot];
 
-  /* Fill reply message with UID/GID information. */
-  mp->mp_reply.m_pm_lsys_getepinfo.uid = rmp_target->mp_realuid;
-  mp->mp_reply.m_pm_lsys_getepinfo.euid = rmp_target->mp_effuid;
-  mp->mp_reply.m_pm_lsys_getepinfo.gid = rmp_target->mp_realgid;
-  mp->mp_reply.m_pm_lsys_getepinfo.egid = rmp_target->mp_effgid;
-  mp->mp_reply.m_pm_lsys_getepinfo.ngroups = rmp_target->mp_ngroups;
-
-  /* Copy supplemental groups if requested and space allows. */
-  ngroups_to_copy = rmp_target->mp_ngroups;
-  if (ngroups_to_copy > m_in.m_lsys_pm_getepinfo.ngroups)
-	ngroups_to_copy = m_in.m_lsys_pm_getepinfo.ngroups;
-
-  if (ngroups_to_copy > 0) {
-	if ((r = sys_datacopy(SELF, (vir_bytes)rmp_target->mp_sgroups, who_e,
-	    (vir_bytes)m_in.m_lsys_pm_getepinfo.groups, (phys_bytes)ngroups_to_copy * sizeof(gid_t))) != OK)
+  mp->mp_reply.m_pm_lsys_getepinfo.uid = rmp->mp_realuid;
+  mp->mp_reply.m_pm_lsys_getepinfo.euid = rmp->mp_effuid;
+  mp->mp_reply.m_pm_lsys_getepinfo.gid = rmp->mp_realgid;
+  mp->mp_reply.m_pm_lsys_getepinfo.egid = rmp->mp_effgid;
+  mp->mp_reply.m_pm_lsys_getepinfo.ngroups = ngroups = rmp->mp_ngroups;
+  if (ngroups > m_in.m_lsys_pm_getepinfo.ngroups)
+	ngroups = m_in.m_lsys_pm_getepinfo.ngroups;
+  if (ngroups > 0) {
+	if ((r = sys_datacopy(SELF, (vir_bytes)rmp->mp_sgroups, who_e,
+	    m_in.m_lsys_pm_getepinfo.groups, ngroups * sizeof(gid_t))) != OK)
 		return(r);
   }
-  return(rmp_target->mp_pid);
+  return(rmp->mp_pid);
 }
 
 /*===========================================================================*
@@ -223,10 +210,8 @@ do_reboot(void)
   if (abort_flag & RB_POWERDOWN) {
 	endpoint_t readclock_ep;
 	if (ds_retrieve_label_endpt("readclock.drv", &readclock_ep) == OK) {
-		message rtc_m; /* no params to set, nothing we can do if it fails */
-		memset(&rtc_m, 0, sizeof(rtc_m));
-		rtc_m.m_type = RTCDEV_PWR_OFF; /* Assuming RTCDEV_PWR_OFF is defined and correctly used */
-		_taskcall(readclock_ep, RTCDEV_PWR_OFF, &rtc_m);
+		message m; /* no params to set, nothing we can do if it fails */
+		_taskcall(readclock_ep, RTCDEV_PWR_OFF, &m);
 	}
   }
 
@@ -235,18 +220,16 @@ do_reboot(void)
    * SIGKILL. So first kill, then reboot.
    */
 
-  /* Kill all user processes except init. System processes will be handled by RS. */
-  check_sig(-1, SIGKILL, FALSE /* ksig*/);
+  check_sig(-1, SIGKILL, FALSE /* ksig*/); /* kill all users except init */
   sys_stop(INIT_PROC_NR);		   /* stop init, but keep it around */
 
-  /* Tell VFS to reboot. */
+  /* Tell VFS to reboot */
   memset(&m, 0, sizeof(m));
   m.m_type = VFS_PM_REBOOT;
 
-  /* Send synchronously to VFS to ensure it receives it before PM potentially crashes. */
   tell_vfs(&mproc[VFS_PROC_NR], &m);
 
-  return(SUSPEND);			/* don't reply to caller; system will reboot */
+  return(SUSPEND);			/* don't reply to caller */
 }
 
 /*===========================================================================*
@@ -256,7 +239,7 @@ int
 do_getsetpriority(void)
 {
 	int r, arg_which, arg_who, arg_pri;
-	struct mproc *rmp_target;
+	struct mproc *rmp;
 
 	arg_which = m_in.m_lc_pm_priority.which;
 	arg_who = m_in.m_lc_pm_priority.who;
@@ -268,36 +251,37 @@ do_getsetpriority(void)
 	if (arg_which != PRIO_PROCESS)
 		return(EINVAL);
 
-	if (arg_who == 0) /* Target is calling process itself */
-		rmp_target = mp;
-	else /* Target is specified by PID */
-		if ((rmp_target = find_proc(arg_who)) == NULL)
+	if (arg_who == 0)
+		rmp = mp;
+	else
+		if ((rmp = find_proc(arg_who)) == NULL)
 			return(ESRCH);
 
-	/* Permission check:
-	 * Only SUPER_USER or process with matching effective/real UIDs can change priority. */
 	if (mp->mp_effuid != SUPER_USER &&
-	    mp->mp_effuid != rmp_target->mp_effuid && mp->mp_effuid != rmp_target->mp_realuid &&
-	    mp->mp_realuid != rmp_target->mp_effuid && mp->mp_realuid != rmp_target->mp_realuid)
+	   mp->mp_effuid != rmp->mp_effuid && mp->mp_effuid != rmp->mp_realuid)
 		return EPERM;
 
-	/* If GETPRIORITY, return current nice value. */
+	/* If GET, that's it. */
 	if (call_nr == PM_GETPRIORITY) {
-		return(rmp_target->mp_nice - PRIO_MIN);
+		return(rmp->mp_nice - PRIO_MIN);
 	}
 
-	/* We're SETPRIORITY. Check permissions to decrease nice level.
-	 * Only root is allowed to reduce the nice level (i.e., increase priority). */
-	if (rmp_target->mp_nice > arg_pri && mp->mp_effuid != SUPER_USER)
+	/* Only root is allowed to reduce the nice level. */
+	if (rmp->mp_nice > arg_pri && mp->mp_effuid != SUPER_USER)
 		return(EACCES);
 
-	/* The value passed in is currently between PRIO_MIN and PRIO_MAX.
-	 * sched_nice maps this to the kernel's scheduling queues. */
-	if ((r = sched_nice(rmp_target, arg_pri)) != OK) {
+	/* We're SET, and it's allowed.
+	 *
+	 * The value passed in is currently between PRIO_MIN and PRIO_MAX.
+	 * We have to scale this between MIN_USER_Q and MAX_USER_Q to match
+	 * the kernel's scheduling queues.
+	 */
+
+	if ((r = sched_nice(rmp, arg_pri)) != OK) {
 		return r;
 	}
 
-	rmp_target->mp_nice = arg_pri; /* Update PM's internal record */
+	rmp->mp_nice = arg_pri;
 	return(OK);
 }
 
@@ -308,103 +292,98 @@ int do_svrctl(void)
 {
   unsigned long req;
   int s;
-  vir_bytes ptr_arg;
+  vir_bytes ptr;
 #define MAX_LOCAL_PARAMS 2
   static struct {
   	char name[30];
   	char value[30];
   } local_param_overrides[MAX_LOCAL_PARAMS];
-  static int local_params_count = 0;
+  static int local_params = 0;
 
   req = m_in.m_lc_svrctl.request;
-  ptr_arg = (vir_bytes)m_in.m_lc_svrctl.arg;
+  ptr = m_in.m_lc_svrctl.arg;
 
   /* Is the request indeed for the PM? ('M' is old and being phased out) */
   if (IOCGROUP(req) != 'P' && IOCGROUP(req) != 'M') return(EINVAL);
 
   /* Control operations local to the PM. */
   switch(req) {
-  case OPMSETPARAM: /* Old/deprecated */
-  case OPMGETPARAM: /* Old/deprecated */
+  case OPMSETPARAM:
+  case OPMGETPARAM:
   case PMSETPARAM:
   case PMGETPARAM: {
-      struct sysgetenv sysgetenv_req;
+      struct sysgetenv sysgetenv;
       char search_key[64];
       char *val_start;
       size_t val_len;
       size_t copy_len;
 
       /* Copy sysgetenv structure to PM. */
-      if (sys_datacopy(who_e, ptr_arg, SELF, (vir_bytes) &sysgetenv_req,
-              sizeof(sysgetenv_req)) != OK) return(EFAULT);
+      if (sys_datacopy(who_e, ptr, SELF, (vir_bytes) &sysgetenv,
+              sizeof(sysgetenv)) != OK) return(EFAULT);
 
       /* Set a param override? */
       if (req == PMSETPARAM || req == OPMSETPARAM) {
-  	if (local_params_count >= MAX_LOCAL_PARAMS) return ENOSPC;
-  	if (sysgetenv_req.keylen <= 0
-  	 || sysgetenv_req.keylen >=
-  	 	 sizeof(local_param_overrides[local_params_count].name)
-  	 || sysgetenv_req.vallen <= 0
-  	 || sysgetenv_req.vallen >=
-  	 	 sizeof(local_param_overrides[local_params_count].value))
+  	if (local_params >= MAX_LOCAL_PARAMS) return ENOSPC;
+  	if (sysgetenv.keylen <= 0
+  	 || sysgetenv.keylen >=
+  	 	 sizeof(local_param_overrides[local_params].name)
+  	 || sysgetenv.vallen <= 0
+  	 || sysgetenv.vallen >=
+  	 	 sizeof(local_param_overrides[local_params].value))
   		return EINVAL;
 
-          if ((s = sys_datacopy(who_e, (vir_bytes) sysgetenv_req.key,
-            SELF, (vir_bytes) local_param_overrides[local_params_count].name,
-               sysgetenv_req.keylen)) != OK)
+          if ((s = sys_datacopy(who_e, (vir_bytes) sysgetenv.key,
+            SELF, (vir_bytes) local_param_overrides[local_params].name,
+               sysgetenv.keylen)) != OK)
                	return s;
-          if ((s = sys_datacopy(who_e, (vir_bytes) sysgetenv_req.val,
-            SELF, (vir_bytes) local_param_overrides[local_params_count].value,
-              sysgetenv_req.vallen)) != OK)
+          if ((s = sys_datacopy(who_e, (vir_bytes) sysgetenv.val,
+            SELF, (vir_bytes) local_param_overrides[local_params].value,
+              sysgetenv.vallen)) != OK)
                	return s;
-            local_param_overrides[local_params_count].name[sysgetenv_req.keylen] = '\0';
-            local_param_overrides[local_params_count].value[sysgetenv_req.vallen] = '\0';
+            local_param_overrides[local_params].name[sysgetenv.keylen] = '\0';
+            local_param_overrides[local_params].value[sysgetenv.vallen] = '\0';
 
-  	local_params_count++;
+  	local_params++;
 
   	return OK;
       }
 
-      /* PMGETPARAM: Get parameter value. */
-      if (sysgetenv_req.keylen == 0) {	/* copy all parameters (monitor_params) */
+      if (sysgetenv.keylen == 0) {	/* copy all parameters */
           val_start = monitor_params;
           val_len = sizeof(monitor_params);
       }
-      else {				/* lookup value for specific key */
+      else {				/* lookup value for key */
       	  int p;
           /* Try to get a copy of the requested key. */
-          if (sysgetenv_req.keylen > sizeof(search_key) -1 ) { /* -1 for null terminator */
-              return(EINVAL);
-          }
-          if ((s = sys_datacopy(who_e, (vir_bytes) sysgetenv_req.key,
-                  SELF, (vir_bytes) search_key, sysgetenv_req.keylen)) != OK)
+          if (sysgetenv.keylen > sizeof(search_key)) return(EINVAL);
+          if ((s = sys_datacopy(who_e, (vir_bytes) sysgetenv.key,
+                  SELF, (vir_bytes) search_key, sysgetenv.keylen)) != OK)
               return(s);
 
           /* Make sure key is null-terminated and lookup value.
-           * First check local overrides, then boot monitor parameters. */
-          search_key[sysgetenv_req.keylen]= '\0'; /* Ensure null termination */
-          for(p = 0; p < local_params_count; p++) {
+           * First check local overrides.
+           */
+          search_key[sysgetenv.keylen-1]= '\0';
+          for(p = 0; p < local_params; p++) {
           	if (!strcmp(search_key, local_param_overrides[p].name)) {
           		val_start = local_param_overrides[p].value;
           		break;
           	}
           }
-          if (p >= local_params_count) { /* Not found in local overrides */
-              if ((val_start = find_param(search_key)) == NULL) {
-                   return(ESRCH);
-              }
-          }
-          val_len = strlen(val_start) + 1; /* Include null terminator */
+          if (p >= local_params && (val_start = find_param(search_key)) == NULL)
+               return(ESRCH);
+          val_len = strlen(val_start) + 1;
       }
 
       /* See if it fits in the client's buffer. */
-      if (val_len > sysgetenv_req.vallen)
+      if (val_len > sysgetenv.vallen)
       	return E2BIG;
 
       /* Value found, make the actual copy (as far as possible). */
-      copy_len = MIN(val_len, sysgetenv_req.vallen);
-      if ((s = sys_datacopy(SELF, (vir_bytes) val_start,
-              who_e, (vir_bytes) sysgetenv_req.val, copy_len)) != OK)
+      copy_len = MIN(val_len, sysgetenv.vallen);
+      if ((s=sys_datacopy(SELF, (vir_bytes) val_start,
+              who_e, (vir_bytes) sysgetenv.val, copy_len)) != OK)
           return(s);
 
       return OK;
@@ -423,30 +402,30 @@ do_getrusage(void)
 {
 	clock_t user_time, sys_time;
 	struct rusage r_usage;
-	int r, children_flag;
+	int r, children;
 
 	if (m_in.m_lc_pm_rusage.who != RUSAGE_SELF &&
 	    m_in.m_lc_pm_rusage.who != RUSAGE_CHILDREN)
 		return EINVAL;
 
 	/*
-	 * TODO: first relay the call to VFS. As is, VFS does not have any
+	 * TODO: first relay the call to VFS.  As is, VFS does not have any
 	 * fields it can fill with meaningful values, but this may change in
-	 * the future. In that case, PM would first have to use the tell_vfs()
+	 * the future.  In that case, PM would first have to use the tell_vfs()
 	 * system to get those values from VFS, and do the rest here upon
 	 * getting the response.
 	 */
 
 	memset(&r_usage, 0, sizeof(r_usage));
 
-	children_flag = (m_in.m_lc_pm_rusage.who == RUSAGE_CHILDREN);
+	children = (m_in.m_lc_pm_rusage.who == RUSAGE_CHILDREN);
 
 	/*
-	 * Get system times. For RUSAGE_SELF, get the times for the calling
-	 * process from the kernel. For RUSAGE_CHILDREN, we already have the
-	 * values we should return right here (mp->mp_child_utime/stime).
+	 * Get system times.  For RUSAGE_SELF, get the times for the calling
+	 * process from the kernel.  For RUSAGE_CHILDREN, we already have the
+	 * values we should return right here.
 	 */
-	if (!children_flag) {
+	if (!children) {
 		if ((r = sys_times(who_e, &user_time, &sys_time, NULL,
 		    NULL)) != OK)
 			return r;
@@ -459,10 +438,10 @@ do_getrusage(void)
 	set_rusage_times(&r_usage, user_time, sys_time);
 
 	/* Get additional fields from VM. */
-	if ((r = vm_getrusage(who_e, &r_usage, children_flag)) != OK)
+	if ((r = vm_getrusage(who_e, &r_usage, children)) != OK)
 		return r;
 
 	/* Finally copy the structure to the caller. */
 	return sys_datacopy(SELF, (vir_bytes)&r_usage, who_e,
-	    (vir_bytes)m_in.m_lc_pm_rusage.addr, (phys_bytes)sizeof(r_usage));
+	    m_in.m_lc_pm_rusage.addr, (vir_bytes)sizeof(r_usage));
 }
