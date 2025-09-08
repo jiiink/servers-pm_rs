@@ -4,9 +4,9 @@
 #include <libexec.h>
 #include <machine/vmparam.h>
 
-static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
-	char *frame, int frame_len, vir_bytes ps_str);
-static int exec_restart(int proc_e, int result, vir_bytes pc, vir_bytes ps_str);
+static int do_exec_internal(endpoint_t proc_e, char *exec_hdr, size_t exec_len, char *progname,
+	char *frame, int frame_len, vir_bytes ps_str_addr);
+static int exec_restart_pm(endpoint_t proc_e, int result, vir_bytes pc, vir_bytes ps_str_addr);
 static int read_seg(struct exec_info *execi, off_t off,
         vir_bytes seg_addr, size_t seg_bytes);
 
@@ -15,22 +15,26 @@ static struct exec_loaders {
 	libexec_exec_loadfunc_t load_object;
 } const exec_loaders[] = {
 	{ libexec_load_elf },
-	{ NULL }
+	{ NULL } /* Sentinel */
 };
 
-int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
+/*===========================================================================*
+ *				srv_execve				     *
+ *===========================================================================*/
+int srv_execve(endpoint_t proc_e, char *exec_hdr, size_t exec_len, char *progname,
 	char **argv, char **envp)
 {
 	size_t frame_size = 0;	/* Size of the new initial stack. */
+	char overflow = 0;	/* Flag for stack overflow. */
+	char *frame;        	/* Pointer to the allocated stack frame. */
 	int argc = 0;		/* Argument count. */
-	int envc = 0;		/* Environment count */
-	char overflow = 0;	/* No overflow yet. */
-	char *frame;
-	struct ps_strings *psp;
-	int vsp = 0;	/* (virtual) Stack pointer in new address space. */
+	int envc = 0;		/* Environment count. */
+	struct ps_strings *psp; /* Pointer to ps_strings structure in stack frame. */
+	vir_bytes vsp_ps_strings_offset = 0; /* Virtual address of ps_strings in new address space. */
 
 	int r;
 
+	/* Calculate the required stack frame size and count args/env. */
 	minix_stack_params(argv[0], argv, envp, &frame_size, &overflow,
 		&argc, &envc);
 
@@ -40,27 +44,31 @@ int srv_execve(int proc_e, char *exec, size_t exec_len, char *progname,
 		return -1;
 	}
 
-	/* Allocate space for the stack frame. */
+	/* Allocate space for the stack frame in RS's memory. */
 	if ((frame = (char *) sbrk(frame_size)) == (char *) -1) {
 		errno = E2BIG;
 		return -1;
 	}
 
+	/* Fill the stack frame with argc, argv, envp, and ps_strings. */
 	minix_stack_fill(argv[0], argc, argv, envc, envp, frame_size, frame,
-		&vsp, &psp);
+		(vir_bytes *)&vsp_ps_strings_offset, &psp);
 
-	r = do_exec(proc_e, exec, exec_len, progname, frame, frame_size,
-		vsp + ((char *)psp - frame));
+	/* Perform the actual exec. */
+	r = do_exec_internal(proc_e, exec_hdr, exec_len, progname, frame, frame_size,
+		(vir_bytes)vsp_ps_strings_offset + ((char *)psp - frame));
 
-	/* Failure, return the memory used for the frame and exit. */
-	(void) sbrk(-frame_size);
+	/* Clean up: return the memory used for the stack frame. */
+	(void) sbrk(-(ssize_t)frame_size);
 
 	return r;
 }
 
-
-static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
-	char *frame, int frame_len, vir_bytes ps_str)
+/*===========================================================================*
+ *				do_exec_internal			     *
+ *===========================================================================*/
+static int do_exec_internal(endpoint_t proc_e, char *exec_hdr, size_t exec_len, char *progname,
+	char *frame, int frame_len, vir_bytes ps_str_addr)
 {
 	int r;
 	vir_bytes vsp;
@@ -69,56 +77,59 @@ static int do_exec(int proc_e, char *exec, size_t exec_len, char *progname,
 
 	memset(&execi, 0, sizeof(execi));
 
-	execi.stack_high = minix_get_user_sp();
+	execi.stack_high = minix_get_user_sp(); /* Get the high address for user stack */
 	execi.stack_size = DEFAULT_STACK_LIMIT;
 	execi.proc_e = proc_e;
-	execi.hdr = exec;
+	execi.hdr = exec_hdr;
 	execi.filesize = execi.hdr_len = exec_len;
-	strncpy(execi.progname, progname, PROC_NAME_LEN-1);
-	execi.progname[PROC_NAME_LEN-1] = '\0';
+	(void)strncpy(execi.progname, progname, sizeof(execi.progname)-1);
+	execi.progname[sizeof(execi.progname)-1] = '\0';
 	execi.frame_len = frame_len;
 
 	/* callback functions and data */
 	execi.copymem = read_seg;
-	execi.clearproc = libexec_clearproc_vm_procctl;
-	execi.clearmem = libexec_clear_sys_memset;
+	execi.clearproc = libexec_clearproc_vm_procctl; /* VM to clear process' memory */
+	execi.clearmem = libexec_clear_sys_memset;     /* Sys_memset to zero-fill */
 	execi.allocmem_prealloc_cleared = libexec_alloc_mmap_prealloc_cleared;
 	execi.allocmem_prealloc_junk = libexec_alloc_mmap_prealloc_junk;
 	execi.allocmem_ondemand = libexec_alloc_mmap_ondemand;
 
+	/* Try each exec loader to load the object. */
 	for(i = 0; exec_loaders[i].load_object != NULL; i++) {
 	    r = (*exec_loaders[i].load_object)(&execi);
-	    /* Loaded successfully, so no need to try other loaders */
-	    if (r == OK) break;
+	    if (r == OK) break; /* Loaded successfully */
 	}
 
-	/* No exec loader could load the object */
+	/* No exec loader could load the object. */
 	if (r != OK) {
-	    printf("RS: do_exec: loading error %d\n", r);
+	    printf("RS: do_exec_internal: loading error %d for endpoint %d\n", r, proc_e);
 	    return r;
 	}
 
-	/* Inform PM */
-        if((r = libexec_pm_newexec(execi.proc_e, &execi)) != OK)
+	/* Inform PM that a new executable is being loaded. */
+    if((r = libexec_pm_newexec(execi.proc_e, &execi)) != OK) {
+		printf("RS: libexec_pm_newexec failed for endpoint %d: %d\n", proc_e, r);
 		return r;
+	}
 
-	/* Patch up stack and copy it from RS to new core image. */
+	/* Patch up stack pointer and copy the stack frame from RS to new core image. */
 	vsp = execi.stack_high - frame_len;
 	r = sys_datacopy(SELF, (vir_bytes) frame,
 		proc_e, (vir_bytes) vsp, (phys_bytes)frame_len);
 	if (r != OK) {
-		printf("do_exec: copying out new stack failed: %d\n", r);
-		exec_restart(proc_e, r, execi.pc, ps_str);
+		printf("RS: do_exec_internal: copying out new stack for endpoint %d failed: %d\n", proc_e, r);
+		exec_restart_pm(proc_e, r, execi.pc, ps_str_addr); /* Inform PM about the failure */
 		return r;
 	}
 
-	return exec_restart(proc_e, OK, execi.pc, ps_str);
+	/* Inform PM to restart the process with the new PC and SP. */
+	return exec_restart_pm(proc_e, OK, execi.pc, ps_str_addr);
 }
 
 /*===========================================================================*
- *				exec_restart				     *
+ *				exec_restart_pm				     *
  *===========================================================================*/
-static int exec_restart(int proc_e, int result, vir_bytes pc, vir_bytes ps_str)
+static int exec_restart_pm(endpoint_t proc_e, int result, vir_bytes pc, vir_bytes ps_str_addr)
 {
 	int r;
 	message m;
@@ -128,13 +139,15 @@ static int exec_restart(int proc_e, int result, vir_bytes pc, vir_bytes ps_str)
 	m.m_rs_pm_exec_restart.endpt = proc_e;
 	m.m_rs_pm_exec_restart.result = result;
 	m.m_rs_pm_exec_restart.pc = pc;
-	m.m_rs_pm_exec_restart.ps_str = ps_str;
+	m.m_rs_pm_exec_restart.ps_str = ps_str_addr;
 
 	r = ipc_sendrec(PM_PROC_NR, &m);
-	if (r != OK)
+	if (r != OK) {
+		printf("RS: ipc_sendrec to PM for EXEC_RESTART failed: %d\n", r);
 		return r;
+	}
 
-	return m.m_type;
+	return m.m_type; /* Return status from PM */
 }
 
 /*===========================================================================*
@@ -152,14 +165,17 @@ size_t seg_bytes           /* how much is to be transferred? */
  * a segment is padded out to a click multiple, and the data segment is only
  * partially initialized.
  */
-
   int r;
 
-  if (off+seg_bytes > execi->hdr_len) return ENOEXEC;
-  if((r= sys_datacopy(SELF, ((vir_bytes)execi->hdr)+off,
+  if (off < 0 || off + seg_bytes > execi->hdr_len) {
+	printf("RS: exec read_seg: invalid offset (0x%lx) or size (0x%zx) for header length (0x%zx)\n",
+		(unsigned long)off, seg_bytes, execi->hdr_len);
+	return ENOEXEC;
+  }
+  if((r = sys_datacopy(SELF, ((vir_bytes)execi->hdr) + off,
   	execi->proc_e, seg_addr, seg_bytes)) != OK) {
-	printf("RS: exec read_seg: copy 0x%x bytes into %i at 0x%08lx failed: %i\n",
-		(int) seg_bytes, execi->proc_e, seg_addr, r);
+	printf("RS: exec read_seg: copy 0x%zx bytes from 0x%lx into %i at 0x%lx failed: %i\n",
+		seg_bytes, ((unsigned long)execi->hdr) + off, execi->proc_e, (unsigned long)seg_addr, r);
   }
   return r;
 }

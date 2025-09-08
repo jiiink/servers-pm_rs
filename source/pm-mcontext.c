@@ -12,7 +12,10 @@
 int
 do_setmcontext(void)
 {
-  return sys_setmcontext(who_e, m_in.m_lc_pm_mcontext.ctx);
+  /* Forward the system call to the kernel. `who_e` is the endpoint
+   * of the calling process, and `m_lc_pm_mcontext.ctx` is the virtual
+   * address of the mcontext structure in the caller's address space. */
+  return sys_setmcontext(who_e, (const struct __mcontext *)m_in.m_lc_pm_mcontext.ctx);
 }
 
 
@@ -22,6 +25,8 @@ do_setmcontext(void)
 int
 do_getmcontext(void)
 {
-  return sys_getmcontext(who_e, m_in.m_lc_pm_mcontext.ctx);
+  /* Forward the system call to the kernel. `who_e` is the endpoint
+   * of the calling process, and `m_lc_pm_mcontext.ctx` is the virtual
+   * address where the kernel should copy the mcontext structure. */
+  return sys_getmcontext(who_e, (struct __mcontext *)m_in.m_lc_pm_mcontext.ctx);
 }
-

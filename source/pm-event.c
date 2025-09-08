@@ -55,88 +55,92 @@
  * and uses asynchronous messaging to boot, so clearly it does not scale to
  * numbers larger than this.
  */
-#define NR_SUBS		4
+#define PM_MAX_EVENT_SUBS	4 /* Changed NR_SUBS to PM_MAX_EVENT_SUBS for clarity and to avoid conflict */
 
-static struct {
+typedef struct {
 	endpoint_t endpt;		/* endpoint of subscriber */
 	unsigned int mask;		/* interests bit mask (PROC_EVENT_) */
 	unsigned int waiting;		/* # procs blocked on reply from it */
-} subs[NR_SUBS];
+} PmEventSubscriber;
 
-static unsigned int nsubs = 0;
-static unsigned int nested = 0;
+static PmEventSubscriber event_subscribers[PM_MAX_EVENT_SUBS];
+static unsigned int num_event_subscribers = 0;
+static unsigned int nested_event_calls = 0; /* Renamed 'nested' for clarity */
 
-/*
- * For the current event of the given process, as determined by its flags, send
- * a process event message to the next subscriber, or resume handling the
- * event itself if there are no more subscribers to notify.
- */
+static void resume_event(struct mproc * rmp);
+static void remove_subscriber(unsigned int slot);
+
+/*===========================================================================*
+ *				resume_event				     *
+ *===========================================================================*/
 static void
 resume_event(struct mproc * rmp)
 {
 	message m;
-	unsigned int i, event;
+	unsigned int i, event_type;
 	int r;
 
-	assert(rmp->mp_flags & IN_USE);
-	assert(rmp->mp_flags & EVENT_CALL);
+	assert((rmp->mp_flags & IN_USE) && (rmp->mp_flags & EVENT_CALL));
 	assert(rmp->mp_eventsub != NO_EVENTSUB);
 
-	/* Which event should we be concerned about? */
+	/* Determine which event is being processed. */
 	if (rmp->mp_flags & EXITING)
-		event = PROC_EVENT_EXIT;
+		event_type = PROC_EVENT_EXIT;
 	else if (rmp->mp_flags & UNPAUSED)
-		event = PROC_EVENT_SIGNAL;
+		event_type = PROC_EVENT_SIGNAL;
 	else
 		panic("unknown event for flags %x", rmp->mp_flags);
 
-	/*
-	 * If there are additional services interested in this event, send a
-	 * message to the next one.
-	 */
-	for (i = rmp->mp_eventsub; i < nsubs; i++, rmp->mp_eventsub++) {
-		if (subs[i].mask & event) {
+	/* Iterate through subscribers to find the next one interested in this event. */
+	for (i = (unsigned int)rmp->mp_eventsub; i < num_event_subscribers; i++, rmp->mp_eventsub++) {
+		if (event_subscribers[i].mask & event_type) {
 			memset(&m, 0, sizeof(m));
 			m.m_type = PROC_EVENT;
 			m.m_pm_lsys_proc_event.endpt = rmp->mp_endpoint;
-			m.m_pm_lsys_proc_event.event = event;
+			m.m_pm_lsys_proc_event.event = event_type;
 
-			r = asynsend3(subs[i].endpt, &m, AMF_NOREPLY);
-			if (r != OK)
+			/* Send an asynchronous notification. AMF_NOREPLY indicates
+			 * that the sender does not expect an immediate IPC reply,
+			 * but PM will wait for PROC_EVENT_REPLY to clear EVENT_CALL.
+			 */
+			r = asynsend3(event_subscribers[i].endpt, &m, AMF_NOREPLY);
+			if (r != OK) {
+				/* This is a serious error; a critical system service
+				 * could not be notified. Panic to avoid inconsistent state.
+				 */
 				panic("asynsend failed: %d", r);
+			}
 
-			assert(subs[i].waiting < NR_PROCS);
-			subs[i].waiting++;
+			assert(event_subscribers[i].waiting < NR_PROCS);
+			event_subscribers[i].waiting++;
 
-			return;
+			return; /* Event notification sent, process remains blocked. */
 		}
 	}
 
-	/* No more subscribers to be notified, resume the actual event. */
+	/* No more subscribers to be notified, resume the actual event handling. */
 	rmp->mp_flags &= ~EVENT_CALL;
 	rmp->mp_eventsub = NO_EVENTSUB;
 
-	if (event == PROC_EVENT_EXIT)
+	if (event_type == PROC_EVENT_EXIT)
 		exit_restart(rmp);
-	else if (event == PROC_EVENT_SIGNAL)
+	else if (event_type == PROC_EVENT_SIGNAL)
 		restart_sigs(rmp);
 }
 
-/*
- * Remove a subscriber from the set, forcefully if we have to.  Ensure that
- * any processes currently subject to process event notification are updated
- * accordingly, in a way that no services are skipped for process events.
- */
+/*===========================================================================*
+ *				remove_subscriber			     *
+ *===========================================================================*/
 static void
-remove_sub(unsigned int slot)
+remove_subscriber(unsigned int slot)
 {
 	struct mproc *rmp;
 	unsigned int i;
 
 	/* The loop below needs the remaining items to be kept in order. */
-	for (i = slot; i < nsubs - 1; i++)
-		subs[i] = subs[i + 1];
-	nsubs--;
+	for (i = slot; i < num_event_subscribers - 1; i++)
+		event_subscribers[i] = event_subscribers[i + 1];
+	num_event_subscribers--;
 
 	/* Adjust affected processes' event subscriber indexes to match. */
 	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
@@ -146,84 +150,78 @@ remove_sub(unsigned int slot)
 		assert(rmp->mp_eventsub != NO_EVENTSUB);
 
 		/*
-		 * While resuming a process could trigger new events, event
-		 * calls always take place after the corresponding VFS calls,
-		 * making this nesting-safe.  Check anyway, because if nesting
-		 * does occur, we are in serious (un-debuggable) trouble.
+		 * If this process was waiting for the removed subscriber,
+		 * resume its event handling. Otherwise, just decrement the index.
 		 */
 		if ((unsigned int)rmp->mp_eventsub == slot) {
-			nested++;
+			nested_event_calls++;
 			resume_event(rmp);
-			nested--;
+			nested_event_calls--;
 		} else if ((unsigned int)rmp->mp_eventsub > slot)
 			rmp->mp_eventsub--;
 	}
 }
 
-/*
- * Subscribe to process events.  The given event mask denotes the events in
- * which the caller is interested.  Multiple calls will each replace the mask,
- * and a mask of zero will unsubscribe the service from events altogether.
- * Return OK on success, EPERM if the caller may not register for events, or
- * ENOMEM if all subscriber slots are in use already.
- */
+/*===========================================================================*
+ *				do_proceventmask			     *
+ *===========================================================================*/
 int
 do_proceventmask(void)
 {
 	unsigned int i, mask;
 
-	/* This call is for system services only. */
+	/* This call is for privileged system services only. */
 	if (!(mp->mp_flags & PRIV_PROC))
 		return EPERM;
 
-	mask = m_in.m_lsys_pm_proceventmask.mask;
+	mask = (unsigned int)m_in.m_lsys_pm_proceventmask.mask;
 
 	/*
 	 * First check if we need to update or remove an existing entry.
-	 * We cannot actually remove services for which we are still waiting
-	 * for a reply, so set their mask to zero for later removal instead.
 	 */
-	for (i = 0; i < nsubs; i++) {
-		if (subs[i].endpt == who_e) {
-			if (mask == 0 && subs[i].waiting == 0)
-				remove_sub(i);
-			else
-				subs[i].mask = mask;
+	for (i = 0; i < num_event_subscribers; i++) {
+		if (event_subscribers[i].endpt == who_e) {
+			if (mask == 0 && event_subscribers[i].waiting == 0) {
+				/* No longer interested and no pending events, remove. */
+				remove_subscriber(i);
+            } else {
+				/* Update mask, even if waiting (to reflect new interest). */
+				event_subscribers[i].mask = mask;
+            }
 			return OK;
 		}
 	}
 
 	/* Add a new entry, unless the given mask is empty. */
 	if (mask == 0)
-		return OK;
+		return OK; /* No mask, no subscription, no error. */
 
-	/* This case should never trigger. */
-	if (nsubs == __arraycount(subs)) {
+	/* Check for available slots. */
+	if (num_event_subscribers == __arraycount(event_subscribers)) {
 		printf("PM: too many process event subscribers!\n");
 		return ENOMEM;
 	}
 
-	subs[nsubs].endpt = who_e;
-	subs[nsubs].mask = mask;
-	nsubs++;
+	event_subscribers[num_event_subscribers].endpt = who_e;
+	event_subscribers[num_event_subscribers].mask = mask;
+	event_subscribers[num_event_subscribers].waiting = 0; /* New subscriber is not waiting */
+	num_event_subscribers++;
 
 	return OK;
 }
 
-/*
- * A subscribing service has replied to a process event message from us, or at
- * least that is what should have happened.  First make sure of this, and then
- * resume event handling for the affected process.
- */
+/*===========================================================================*
+ *				do_proc_event_reply			     *
+ *===========================================================================*/
 int
 do_proc_event_reply(void)
 {
 	struct mproc *rmp;
-	endpoint_t endpt;
-	unsigned int i, event;
-	int slot;
+	endpoint_t event_proc_endpoint;
+	unsigned int i, event_type;
+	int slot_nr;
 
-	assert(nested == 0);
+	assert(nested_event_calls == 0);
 
 	/*
 	 * Is this an accidental call from a misguided user process?
@@ -232,51 +230,57 @@ do_proc_event_reply(void)
 	if (!(mp->mp_flags & PRIV_PROC))
 		return ENOSYS;
 
-	/*
-	 * Ensure that we got the reply that we want.  Since this code is
-	 * relatively new, produce lots of warnings for cases that should never
-	 * or rarely occur.  Later we can just ignore all mismatching replies.
-	 */
-	endpt = m_in.m_pm_lsys_proc_event.endpt;
-	if (pm_isokendpt(endpt, &slot) != OK) {
+	/* Validate the endpoint for which the reply is intended. */
+	event_proc_endpoint = m_in.m_pm_lsys_proc_event.endpt;
+	if (pm_isokendpt(event_proc_endpoint, &slot_nr) != OK) {
 		printf("PM: proc event reply from %d for invalid endpt %d\n",
-		    who_e, endpt);
+		    who_e, event_proc_endpoint);
 		return SUSPEND;
 	}
-	rmp = &mproc[slot];
+	rmp = &mproc[slot_nr];
+
+	/* Check if the process is indeed blocked on an event. */
 	if (!(rmp->mp_flags & EVENT_CALL)) {
-		printf("PM: proc event reply from %d for endpt %d, no event\n",
-		    who_e, endpt);
-		return SUSPEND;
-	}
-	if (rmp->mp_eventsub == NO_EVENTSUB ||
-	    (unsigned int)rmp->mp_eventsub >= nsubs) {
-		printf("PM: proc event reply from %d for endpt %d index %d\n",
-		    who_e, endpt, rmp->mp_eventsub);
-		return SUSPEND;
-	}
-	i = rmp->mp_eventsub;
-	if (subs[i].endpt != who_e) {
-		printf("PM: proc event reply for %d from %d instead of %d\n",
-		    endpt, who_e, subs[i].endpt);
+		printf("PM: proc event reply from %d for endpt %d, no event pending\n",
+		    who_e, event_proc_endpoint);
 		return SUSPEND;
 	}
 
+	/* Check if the subscriber index is valid. */
+	if (rmp->mp_eventsub == NO_EVENTSUB ||
+	    (unsigned int)rmp->mp_eventsub >= num_event_subscribers) {
+		printf("PM: proc event reply from %d for endpt %d with invalid subscriber index %d\n",
+		    who_e, event_proc_endpoint, rmp->mp_eventsub);
+		return SUSPEND;
+	}
+	i = (unsigned int)rmp->mp_eventsub;
+
+	/* Verify the reply came from the expected subscriber. */
+	if (event_subscribers[i].endpt != who_e) {
+		printf("PM: proc event reply for %d from %d instead of expected %d\n",
+		    event_proc_endpoint, who_e, event_subscribers[i].endpt);
+		return SUSPEND;
+	}
+
+	/* Determine the expected event type for consistency check. */
 	if (rmp->mp_flags & EXITING)
-		event = PROC_EVENT_EXIT;
+		event_type = PROC_EVENT_EXIT;
 	else if (rmp->mp_flags & UNPAUSED)
-		event = PROC_EVENT_SIGNAL;
+		event_type = PROC_EVENT_SIGNAL;
 	else {
 		printf("PM: proc event reply from %d for %d, bad flags %x\n",
-		    who_e, endpt, rmp->mp_flags);
+		    who_e, event_proc_endpoint, rmp->mp_flags);
 		return SUSPEND;
 	}
-	if (m_in.m_pm_lsys_proc_event.event != event) {
+
+	/* Check if the reported event type matches the actual event. */
+	if (m_in.m_pm_lsys_proc_event.event != event_type) {
 		printf("PM: proc event reply from %d for %d for event %d "
-		    "instead of %d\n", who_e, endpt,
-		    m_in.m_pm_lsys_proc_event.event, event);
+		    "instead of expected %d\n", who_e, event_proc_endpoint,
+		    m_in.m_pm_lsys_proc_event.event, event_type);
 		return SUSPEND;
 	}
+
 	/*
 	 * Do NOT check the event against the subscriber's event mask, since a
 	 * service may have unsubscribed from an event while it has yet to
@@ -286,8 +290,8 @@ do_proc_event_reply(void)
 	 * resubscription, and such cases may in fact happen in practice.
 	 */
 
-	assert(subs[i].waiting > 0);
-	subs[i].waiting--;
+	assert(event_subscribers[i].waiting > 0);
+	event_subscribers[i].waiting--;
 
 	/*
 	 * If we are now no longer waiting for any replies from an already
@@ -296,29 +300,26 @@ do_proc_event_reply(void)
 	 * however, let the current process move on to the next subscriber if
 	 * there are more, and the actual event otherwise.
 	 */
-	if (subs[i].mask == 0 && subs[i].waiting == 0) {
-		remove_sub(i);
+	if (event_subscribers[i].mask == 0 && event_subscribers[i].waiting == 0) {
+		remove_subscriber(i);
 	} else {
-		rmp->mp_eventsub++;
-
-		resume_event(rmp);
+		rmp->mp_eventsub++; /* Move to the next potential subscriber */
+		resume_event(rmp);  /* Continue with event processing for rmp */
 	}
 
 	/* In any case, do not reply to this reply message. */
 	return SUSPEND;
 }
 
-/*
- * Publish a process event to interested subscribers.  The event is determined
- * from the process flags.  In addition, if the event is a process exit, also
- * check if it is a subscribing service that died.
- */
+/*===========================================================================*
+ *				publish_event				     *
+ *===========================================================================*/
 void
 publish_event(struct mproc * rmp)
 {
 	unsigned int i;
 
-	assert(nested == 0);
+	assert(nested_event_calls == 0);
 	assert((rmp->mp_flags & (IN_USE | EVENT_CALL)) == IN_USE);
 	assert(rmp->mp_eventsub == NO_EVENTSUB);
 
@@ -328,15 +329,14 @@ publish_event(struct mproc * rmp)
 	 * any processes blocked on an event call to that service.
 	 */
 	if ((rmp->mp_flags & (PRIV_PROC | EXITING)) == (PRIV_PROC | EXITING)) {
-		for (i = 0; i < nsubs; i++) {
-			if (subs[i].endpt == rmp->mp_endpoint) {
+		for (i = 0; i < num_event_subscribers; i++) {
+			if (event_subscribers[i].endpt == rmp->mp_endpoint) {
 				/*
 				 * If the wait count is nonzero, we may or may
 				 * not get additional replies from this service
 				 * later.  Those will be ignored.
 				 */
-				remove_sub(i);
-
+				remove_subscriber(i);
 				break;
 			}
 		}
@@ -347,7 +347,7 @@ publish_event(struct mproc * rmp)
 	 * are no subscribers, resume processing the event right away.
 	 */
 	rmp->mp_flags |= EVENT_CALL;
-	rmp->mp_eventsub = 0;
+	rmp->mp_eventsub = 0; /* Start checking from the first subscriber. */
 
 	resume_event(rmp);
 }
