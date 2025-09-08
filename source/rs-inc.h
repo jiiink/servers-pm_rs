@@ -1,16 +1,8 @@
-/* Header file for the system service manager server. 
- *
- * Created:
- *    Jul 22, 2005	by Jorrit N. Herder 
- */
-
-#define _SYSTEM		1    /* get OK and negative error codes */
+#define _SYSTEM 1
 
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/ptrace.h>
-#include <limits.h>
 #include <errno.h>
 #include <signal.h>
 #include <unistd.h>
@@ -37,20 +29,17 @@
 #include <minix/priv.h>
 
 #include <machine/archtypes.h>
-#include <minix/timers.h>				/* For priv.h */
+#include <minix/timers.h>
 #include "kernel/priv.h"
 #include "kernel/ipc.h"
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <signal.h>
-#include <assert.h>
-#include <sys/param.h>
 
 #include "proto.h"
 #include "const.h"
 #include "type.h"
 #include "glo.h"
 
-EXTERN int do_sef_lu_request(message *m_ptr);
+extern int do_sef_lu_request(message *m_ptr);

@@ -1,12 +1,5 @@
-/* Global variables used in RS.
- */
 #ifndef RS_GLO_H
 #define RS_GLO_H
-
-#ifdef _TABLE
-#undef EXTERN
-#define EXTERN
-#endif
 
 #include <minix/param.h>
 
@@ -30,29 +23,28 @@ extern struct boot_image_dev boot_image_dev_table[];
  * slot number. The size of the table must match the size of the privilege
  * table in the kernel.
  */
-EXTERN struct rprocpub rprocpub[NR_SYS_PROCS];  /* public entries */
-EXTERN struct rproc rproc[NR_SYS_PROCS];
-EXTERN struct rproc *rproc_ptr[NR_PROCS];       /* mapping for fast access */
+extern struct rprocpub rprocpub[NR_SYS_PROCS];  /* public entries */
+extern struct rproc rproc[NR_SYS_PROCS];
+extern struct rproc *rproc_ptr[NR_PROCS];       /* mapping for fast access */
 
 /* Global init descriptor. This descriptor holds data to initialize system
  * services.
  */
-EXTERN sef_init_info_t rinit;
+extern sef_init_info_t rinit;
 
 /* Global update descriptor. This descriptor holds data when a live update
  * is in progress.
  */
-EXTERN struct rupdate rupdate;
+extern struct rupdate rupdate;
 
 /* Enable/disable verbose output. */
-EXTERN long rs_verbose;
+extern long rs_verbose;
 
 /* Set when we are shutting down. */
-EXTERN int shutting_down;
+extern int shutting_down;
 
-EXTERN unsigned system_hz;
+extern unsigned system_hz;
 
-EXTERN struct machine machine;		/* machine info */
+extern struct machine machine;		/* machine info */
 
 #endif /* RS_GLO_H */
-

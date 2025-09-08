@@ -1,7 +1,3 @@
-/* This file contains the table used to map system call numbers onto the
- * routines that perform them.
- */
-
 #define _TABLE
 
 #include "pm.h"
@@ -9,54 +5,62 @@
 #include <signal.h>
 #include "mproc.h"
 
-#define CALL(n)	[((n) - PM_BASE)]
+typedef int (*sys_call_func)(void);
 
-int (* const call_vec[NR_PM_CALLS])(void) = {
-	CALL(PM_EXIT)		= do_exit,		/* _exit(2) */
-	CALL(PM_FORK)		= do_fork,		/* fork(2) */
-	CALL(PM_WAIT4)		= do_wait4,		/* wait4(2) */
-	CALL(PM_GETPID)		= do_get,		/* get[p]pid(2) */
-	CALL(PM_SETUID)		= do_set,		/* setuid(2) */
-	CALL(PM_GETUID)		= do_get,		/* get[e]uid(2) */
-	CALL(PM_STIME)		= do_stime,		/* stime(2) */
-	CALL(PM_PTRACE)		= do_trace,		/* ptrace(2) */
-	CALL(PM_SETGROUPS)	= do_set,		/* setgroups(2) */
-	CALL(PM_GETGROUPS)	= do_get,		/* getgroups(2) */
-	CALL(PM_KILL)		= do_kill,		/* kill(2) */
-	CALL(PM_SETGID)		= do_set,		/* setgid(2) */
-	CALL(PM_GETGID)		= do_get,		/* get[e]gid(2) */
-	CALL(PM_EXEC)		= do_exec,		/* execve(2) */
-	CALL(PM_SETSID)		= do_set,		/* setsid(2) */
-	CALL(PM_GETPGRP)	= do_get,		/* getpgrp(2) */
-	CALL(PM_ITIMER)		= do_itimer,		/* [gs]etitimer(2) */
-	CALL(PM_GETMCONTEXT)	= do_getmcontext,	/* getmcontext(2) */
-	CALL(PM_SETMCONTEXT)	= do_setmcontext,	/* setmcontext(2) */
-	CALL(PM_SIGACTION)	= do_sigaction,		/* sigaction(2) */
-	CALL(PM_SIGSUSPEND)	= do_sigsuspend,	/* sigsuspend(2) */
-	CALL(PM_SIGPENDING)	= do_sigpending,	/* sigpending(2) */
-	CALL(PM_SIGPROCMASK)	= do_sigprocmask,	/* sigprocmask(2) */
-	CALL(PM_SIGRETURN)	= do_sigreturn,		/* sigreturn(2) */
-	CALL(PM_SYSUNAME)	= do_sysuname,		/* sysuname(2) */
-	CALL(PM_GETPRIORITY)	= do_getsetpriority,	/* getpriority(2) */
-	CALL(PM_SETPRIORITY)	= do_getsetpriority,	/* setpriority(2) */
-	CALL(PM_GETTIMEOFDAY)	= do_time,		/* gettimeofday(2) */
-	CALL(PM_SETEUID)	= do_set,		/* geteuid(2) */
-	CALL(PM_SETEGID)	= do_set,		/* setegid(2) */
-	CALL(PM_ISSETUGID)	= do_get,		/* issetugid */
-	CALL(PM_GETSID)		= do_get,		/* getsid(2) */
-	CALL(PM_CLOCK_GETRES)	= do_getres,		/* clock_getres(2) */
-	CALL(PM_CLOCK_GETTIME)	= do_gettime,		/* clock_gettime(2) */
-	CALL(PM_CLOCK_SETTIME)	= do_settime,		/* clock_settime(2) */
-	CALL(PM_GETRUSAGE)	= do_getrusage,		/* getrusage(2) */
-	CALL(PM_REBOOT)		= do_reboot,		/* reboot(2) */
-	CALL(PM_SVRCTL)		= do_svrctl,		/* svrctl(2) */
-	CALL(PM_SPROF)		= do_sprofile,		/* sprofile(2) */
-	CALL(PM_PROCEVENTMASK)	= do_proceventmask,	/* proceventmask(2) */
-	CALL(PM_SRV_FORK)	= do_srv_fork,		/* srv_fork(2) */
-	CALL(PM_SRV_KILL)	= do_srv_kill,		/* srv_kill(2) */
-	CALL(PM_EXEC_NEW)	= do_newexec,
-	CALL(PM_EXEC_RESTART)	= do_execrestart,
-	CALL(PM_GETEPINFO)	= do_getepinfo,		/* getepinfo(2) */
-	CALL(PM_GETPROCNR)	= do_getprocnr,		/* getprocnr(2) */
-	CALL(PM_GETSYSINFO)	= do_getsysinfo		/* getsysinfo(2) */
-};
+sys_call_func get_sys_call_func(int call_nr) {
+    switch (call_nr) {
+        case PM_EXIT: return do_exit;
+        case PM_FORK: return do_fork;
+        case PM_WAIT4: return do_wait4;
+        case PM_GETPID: return do_get;
+        case PM_SETUID: return do_set;
+        case PM_GETUID: return do_get;
+        case PM_STIME: return do_stime;
+        case PM_PTRACE: return do_trace;
+        case PM_SETGROUPS: return do_set;
+        case PM_GETGROUPS: return do_get;
+        case PM_KILL: return do_kill;
+        case PM_SETGID: return do_set;
+        case PM_GETGID: return do_get;
+        case PM_EXEC: return do_exec;
+        case PM_SETSID: return do_set;
+        case PM_GETPGRP: return do_get;
+        case PM_ITIMER: return do_itimer;
+        case PM_GETMCONTEXT: return do_getmcontext;
+        case PM_SETMCONTEXT: return do_setmcontext;
+        case PM_SIGACTION: return do_sigaction;
+        case PM_SIGSUSPEND: return do_sigsuspend;
+        case PM_SIGPENDING: return do_sigpending;
+        case PM_SIGPROCMASK: return do_sigprocmask;
+        case PM_SIGRETURN: return do_sigreturn;
+        case PM_SYSUNAME: return do_sysuname;
+        case PM_GETPRIORITY: return do_getsetpriority;
+        case PM_SETPRIORITY: return do_getsetpriority;
+        case PM_GETTIMEOFDAY: return do_time;
+        case PM_SETEUID: return do_set;
+        case PM_SETEGID: return do_set;
+        case PM_ISSETUGID: return do_get;
+        case PM_GETSID: return do_get;
+        case PM_CLOCK_GETRES: return do_getres;
+        case PM_CLOCK_GETTIME: return do_gettime;
+        case PM_CLOCK_SETTIME: return do_settime;
+        case PM_GETRUSAGE: return do_getrusage;
+        case PM_REBOOT: return do_reboot;
+        case PM_SVRCTL: return do_svrctl;
+        case PM_SPROF: return do_sprofile;
+        case PM_PROCEVENTMASK: return do_proceventmask;
+        case PM_SRV_FORK: return do_srv_fork;
+        case PM_SRV_KILL: return do_srv_kill;
+        case PM_EXEC_NEW: return do_newexec;
+        case PM_EXEC_RESTART: return do_execrestart;
+        case PM_GETEPINFO: return do_getepinfo;
+        case PM_GETPROCNR: return do_getprocnr;
+        case PM_GETSYSINFO: return do_getsysinfo;
+        default: return NULL;
+    }
+}
+
+sys_call_func get_call_vector(int index) {
+    if (index < 0 || index >= NR_PM_CALLS) return NULL;
+    return get_sys_call_func(index + PM_BASE);
+}
