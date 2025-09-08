@@ -7,6 +7,8 @@
 #include "inc.h"
 
 #include <assert.h>
+#include <string.h>
+#include <errno.h>
 #include <minix/sched.h>
 #include "kernel/proc.h"
 
@@ -25,12 +27,10 @@ int init_service(struct rproc *rp, int type, int flags)
   rp->r_alive_tm = getticks();
   rp->r_check_tm = rp->r_alive_tm + 1;         /* expect reply within period */
 
-  /* In case of RS initialization, we are done. */
   if(rp->r_priv.s_flags & ROOT_SYS_PROC) {
       return OK;
   }
 
-  /* Determine the old endpoint if this is a new instance. */
   old_endpoint = NONE;
   prepare_state = SEF_LU_STATE_NULL;
   if(rp->r_old_rp) {
@@ -41,18 +41,17 @@ int init_service(struct rproc *rp, int type, int flags)
       old_endpoint = rp->r_prev_rp->r_pub->endpoint;
   }
 
-  /* Check flags. */
   if(rp->r_pub->sys_flags & SF_USE_SCRIPT) {
       flags |= SEF_INIT_SCRIPT_RESTART;
   }
 
-  /* Send initialization message. */
+  memset(&m, 0, sizeof(m));
   m.m_type = RS_INIT;
   m.m_rs_init.type = (short) type;
   m.m_rs_init.flags = flags;
   m.m_rs_init.rproctab_gid = rinit.rproctab_gid;
   m.m_rs_init.old_endpoint = old_endpoint;
-  m.m_rs_init.restarts = (short) rp->r_restarts+1;
+  m.m_rs_init.restarts = (short) (rp->r_restarts + 1);
   m.m_rs_init.buff_addr = rp->r_map_prealloc_addr;
   m.m_rs_init.buff_len  = rp->r_map_prealloc_len;
   m.m_rs_init.prepare_state = prepare_state;
@@ -69,8 +68,8 @@ int init_service(struct rproc *rp, int type, int flags)
 int fi_service(struct rproc *rp)
 {
   message m;
+  memset(&m, 0, sizeof(m));
 
-  /* Send fault injection message. */
   m.m_type = COMMON_REQ_FI_CTL;
   m.m_lsys_fi_ctl.subtype = RS_FI_CRASH;
   return rs_asynsend(rp, &m, 0);
@@ -79,11 +78,8 @@ int fi_service(struct rproc *rp)
 /*===========================================================================*
  *			      fill_send_mask                                 *
  *===========================================================================*/
-void fill_send_mask(send_mask, set_bits)
-sys_map_t *send_mask;		/* the send mask to fill in */
-int set_bits;			/* TRUE sets all bits, FALSE clears all bits */
+void fill_send_mask(sys_map_t *send_mask, int set_bits)
 {
-/* Fill in a send mask. */
   int i;
 
   for (i = 0; i < NR_SYS_PROCS; i++) {
@@ -97,41 +93,42 @@ int set_bits;			/* TRUE sets all bits, FALSE clears all bits */
 /*===========================================================================*
  *			      fill_call_mask                                 *
  *===========================================================================*/
-void fill_call_mask(calls, tot_nr_calls, call_mask, call_base, is_init)
-int *calls;                     /* the unordered set of calls */
-int tot_nr_calls;               /* the total number of calls */
-bitchunk_t *call_mask;          /* the call mask to fill in */
-int call_base;                  /* the base offset for the calls */
-int is_init;                    /* set when initializing a call mask */
+void fill_call_mask(int *calls, int tot_nr_calls, bitchunk_t *call_mask,
+    int call_base, int is_init)
 {
-/* Fill a call mask from an unordered set of calls. */
   int i;
   int call_mask_size, nr_calls;
 
   call_mask_size = BITMAP_CHUNKS(tot_nr_calls);
 
-  /* Count the number of calls to fill in. */
   nr_calls = 0;
-  for(i=0; calls[i] != NULL_C; i++) {
+  for(i = 0; calls[i] != NULL_C; i++) {
       nr_calls++;
   }
 
-  /* See if all calls are allowed and call mask must be completely filled. */
   if(nr_calls == 1 && calls[0] == ALL_C) {
-      for(i=0; i < call_mask_size; i++) {
-          call_mask[i] = (~0);
+      for(i = 0; i < call_mask_size; i++) {
+          call_mask[i] = (~(bitchunk_t)0);
+      }
+      if (call_mask_size > 0) {
+          int bits_last = tot_nr_calls % BITCHUNK_BITS;
+          if (bits_last != 0) {
+              bitchunk_t mask = ((bitchunk_t)1 << bits_last) - 1;
+              call_mask[call_mask_size - 1] &= mask;
+          }
       }
   }
   else {
-      /* When initializing, reset the mask first. */
       if(is_init) {
-          for(i=0; i < call_mask_size; i++) {
+          for(i = 0; i < call_mask_size; i++) {
               call_mask[i] = 0;
           }
       }
-      /* Enter calls bit by bit. */
-      for(i=0; i < nr_calls; i++) {
-          SET_BIT(call_mask, calls[i] - call_base);
+      for(i = 0; i < nr_calls; i++) {
+          int bit = calls[i] - call_base;
+          if (bit >= 0 && bit < tot_nr_calls) {
+              SET_BIT(call_mask, bit);
+          }
       }
   }
 }
@@ -144,7 +141,6 @@ char* srv_to_string_gen(struct rproc *rp, int is_verbose)
   struct rprocpub *rpub;
   int slot_nr;
   char *srv_string;
-/* LSC: Workaround broken GCC which complains that a const variable is not constant... */
 #define max_len (RS_MAX_LABEL_LEN + 256)
   static char srv_string_pool[3][max_len];
   static int srv_string_pool_index = 0;
@@ -225,6 +221,10 @@ int rs_asynsend(struct rproc *rp, message *m_ptr, int no_reply)
   struct rprocpub *rpub;
   int r;
 
+  if (rp == NULL || rp->r_pub == NULL || m_ptr == NULL) {
+      return EINVAL;
+  }
+
   rpub = rp->r_pub;
 
   if(no_reply) {
@@ -247,16 +247,10 @@ int rs_asynsend(struct rproc *rp, message *m_ptr, int no_reply)
 int rs_receive_ticks(endpoint_t src, message *m_ptr,
     int *status_ptr, clock_t ticks)
 {
-/* IPC receive with timeout.  Implemented with IPC filters.  The timer
- * management logic comes from the tickdelay(3) implementation.
- */
   ipc_filter_el_t ipc_filter[2];
   clock_t time_left, uptime;
   int r, s, status;
 
-  /* Use IPC filters to receive from the provided source and CLOCK only.
-   * We make the hard assumption that RS did not already have IPC filters set.
-   */
   memset(ipc_filter, 0, sizeof(ipc_filter));
   ipc_filter[0].flags = IPCF_MATCH_M_SOURCE;
   ipc_filter[0].m_source = CLOCK;
@@ -267,34 +261,28 @@ int rs_receive_ticks(endpoint_t src, message *m_ptr,
     sizeof(ipc_filter))) != OK)
       panic("RS: rs_receive_ticks: setting IPC filter failed: %d", s);
 
-  /* Set a new alarm, and get information about the previous alarm. */
   if ((s = sys_setalarm2(ticks, FALSE, &time_left, &uptime)) != OK)
       panic("RS: rs_receive_ticks: setting alarm failed: %d", s);
 
-  /* Receive a message from either the provided source or CLOCK. */
   while ((r = ipc_receive(ANY, m_ptr, &status)) == OK &&
     m_ptr->m_source == CLOCK) {
-      /* Ignore early clock notifications. */
       if (m_ptr->m_type == NOTIFY_MESSAGE &&
         m_ptr->m_notify.timestamp >= uptime + ticks)
           break;
   }
 
-  /* Reinstate the previous alarm, if any. Do this in any case. */
   if (time_left != TMR_NEVER) {
       if (time_left > ticks)
           time_left -= ticks;
       else
-          time_left = 1; /* force an alarm */
+          time_left = 1;
 
       (void)sys_setalarm(time_left, FALSE);
   }
 
-  /* Clear the IPC filters. */
   if ((s = sys_statectl(SYS_STATE_CLEAR_IPC_FILTERS, NULL, 0)) != OK)
       panic("RS: rs_receive_ticks: setting IPC filter failed: %d", s);
 
-  /* If the last received message was from CLOCK, we timed out. */
   if (r == OK && m_ptr->m_source == CLOCK)
       return ENOTREADY;
 
@@ -306,14 +294,10 @@ int rs_receive_ticks(endpoint_t src, message *m_ptr,
 /*===========================================================================*
  *				reply					     *
  *===========================================================================*/
-void reply(who, rp, m_ptr)
-endpoint_t who;                        	/* replyee */
-struct rproc *rp;                       /* replyee slot (if any) */
-message *m_ptr;                         /* reply message */
+void reply(endpoint_t who, struct rproc *rp, message *m_ptr)
 {
-  int r;				/* send status */
+  int r;
 
-  /* No need to actually reply to RS */
   if(who == RS_PROC_NR) {
       return;
   }
@@ -321,7 +305,7 @@ message *m_ptr;                         /* reply message */
   if(rs_verbose && rp)
       printf("RS: %s being replied to with message type %d\n", srv_to_string(rp), m_ptr->m_type);
 
-  r = ipc_sendnb(who, m_ptr);		/* send the message */
+  r = ipc_sendnb(who, m_ptr);
   if (r != OK)
       printf("RS: unable to send reply to %d: %d\n", who, r);
 }
@@ -329,11 +313,8 @@ message *m_ptr;                         /* reply message */
 /*===========================================================================*
  *			      late_reply				     *
  *===========================================================================*/
-void late_reply(rp, code)
-struct rproc *rp;				/* pointer to process slot */
-int code;					/* status code */
+void late_reply(struct rproc *rp, int code)
 {
-/* If a caller is waiting for a reply, unblock it. */
   if(rp->r_flags & RS_LATEREPLY) {
       message m;
       m.m_type = code;
@@ -366,17 +347,13 @@ int sched_init_proc(struct rproc *rp)
   int s;
   int is_usr_proc;
 
-  /* Make sure user processes have no scheduler. PM deals with them. */
   is_usr_proc = !(rp->r_priv.s_flags & SYS_PROC);
   if(is_usr_proc) assert(rp->r_scheduler == NONE);
   if(!is_usr_proc) assert(rp->r_scheduler != NONE);
 
-  /* Start scheduling for the given process. */
-  if ((s = sched_start(rp->r_scheduler, rp->r_pub->endpoint, 
+  s = sched_start(rp->r_scheduler, rp->r_pub->endpoint, 
       RS_PROC_NR, rp->r_priority, rp->r_quantum, rp->r_cpu,
-      &rp->r_scheduler)) != OK) {
-      return s;
-  }
+      &rp->r_scheduler);
 
   return s;
 }
@@ -398,20 +375,17 @@ int update_sig_mgrs(struct rproc *rp, endpoint_t sig_mgr,
           sig_mgr == SELF ? "(SELF)" : "",
           bak_sig_mgr == NONE ? -1 : bak_sig_mgr);
 
-  /* Synch privilege structure with the kernel. */
   if ((r = sys_getpriv(&rp->r_priv, rpub->endpoint)) != OK) {
-      printf("unable to synch privilege structure: %d", r);
+      printf("unable to synch privilege structure: %d\n", r);
       return r;
   }
 
-  /* Set signal managers. */
   rp->r_priv.s_sig_mgr = sig_mgr;
   rp->r_priv.s_bak_sig_mgr = bak_sig_mgr;
 
-  /* Update privilege structure. */
   r = sys_privctl(rpub->endpoint, SYS_PRIV_UPDATE_SYS, &rp->r_priv);
   if(r != OK) {
-      printf("unable to update privilege structure: %d", r);
+      printf("unable to update privilege structure: %d\n", r);
       return r;
   }
 
@@ -421,7 +395,7 @@ int update_sig_mgrs(struct rproc *rp, endpoint_t sig_mgr,
 /*===========================================================================*
  *				rs_is_idle			 	     *
  *===========================================================================*/
-int rs_is_idle()
+int rs_is_idle(void)
 {
   int slot_nr;
   struct rproc *rp;
@@ -440,21 +414,16 @@ int rs_is_idle()
 /*===========================================================================*
  *				rs_idle_period				     *
  *===========================================================================*/
-void rs_idle_period()
+void rs_idle_period(void)
 {
   struct rproc *rp;
   struct rprocpub *rpub;
   int r;
 
-  /* Not much to do when RS is not idle. */
-  /* However, to avoid deadlocks it is absolutely necessary that during system
-   * shutdown, dead services are actually cleaned up. Override the idle check.
-   */
   if(!shutting_down && !rs_is_idle()) {
       return;
   }
 
-  /* Cleanup dead services. */
   for (rp=BEG_RPROC_ADDR; rp<END_RPROC_ADDR; rp++) {
       if((rp->r_flags & (RS_IN_USE|RS_DEAD)) == (RS_IN_USE|RS_DEAD)) {
           cleanup_service(rp);
@@ -463,12 +432,10 @@ void rs_idle_period()
 
   if (shutting_down) return;
 
-  /* Create missing replicas when necessary. */
   for (rp=BEG_RPROC_ADDR; rp<END_RPROC_ADDR; rp++) {
       rpub = rp->r_pub;
       if((rp->r_flags & RS_ACTIVE) && (rpub->sys_flags & SF_USE_REPL) && rp->r_next_rp == NULL) {
           if(rpub->endpoint == VM_PROC_NR && (rp->r_old_rp || rp->r_new_rp)) {
-              /* Only one replica at the time for VM. */
               continue;
           }
           if ((r = clone_service(rp, RST_SYS_PROC, 0)) != OK) {
@@ -482,7 +449,7 @@ void rs_idle_period()
 /*===========================================================================*
  *			   print_services_status		 	     *
  *===========================================================================*/
-void print_services_status()
+void print_services_status(void)
 {
   int slot_nr;
   struct rproc *rp;
@@ -513,7 +480,7 @@ void print_services_status()
 /*===========================================================================*
  *			    print_update_status 		 	     *
  *===========================================================================*/
-void print_update_status()
+void print_update_status(void)
 {
   struct rprocupd *prev_rpupd, *rpupd;
   int is_updating = RUPDATE_IS_UPDATING();
@@ -544,4 +511,3 @@ void print_update_status()
 
 #undef rupdate_flag_c
 }
-

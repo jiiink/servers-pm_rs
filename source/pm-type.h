@@ -1,5 +1,14 @@
-/* If there were any type definitions local to the Process Manager, they would
- * be here.  This file is included only for symmetry with the kernel and File
- * System, which do have some local type definitions.
- */
+#ifndef PROCESS_MANAGER_TYPES_H_
+#define PROCESS_MANAGER_TYPES_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* PROCESS_MANAGER_TYPES_H_ */
